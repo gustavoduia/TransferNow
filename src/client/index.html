@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>TransferNow</title>
+    <meta name="description" content="Envie arquivos de um navegador para outro, direto, sem login e sem guardar nada no caminho." />
+    <meta name="theme-color" content="#0C1233" />
+    <meta property="og:title" content="TransferNow" />
+    <meta property="og:description" content="Abra um portal, passe o código e jogue o arquivo. Ele chega direto do outro lado." />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600&family=Exo+2:ital,wght@1,800;1,900&display=swap"
+    />
+    <link rel="preload" href="/fonts/DSEG14Classic-BoldItalic.woff2" as="font" type="font/woff2" crossorigin />
+  </head>
+  <body data-state="idle">
+    <canvas id="scene" aria-hidden="true"></canvas>
+    <div class="vignette" aria-hidden="true"></div>
+
+    <header class="brand">
+      <h1 class="logo">TransferNow</h1>
+      <p class="tagline">De um navegador para o outro, direto. Nada fica guardado no caminho.</p>
+    </header>
+
+    <main class="console" aria-live="polite">
+      <!-- portal desligado -->
+      <section class="panel" data-for="idle">
+        <button class="switch switch--primary" id="btn-open" type="button">
+          <span class="led" aria-hidden="true"></span>Abrir portal
+        </button>
+      </section>
+
+      <!-- portal ligado: escolher o lado -->
+      <section class="panel" data-for="powered">
+        <div class="switch-row">
+          <button class="switch switch--primary" id="btn-send" type="button">
+            <span class="led" aria-hidden="true"></span>Teletransportar
+          </button>
+          <button class="switch" id="btn-receive" type="button">
+            <span class="led led--flux" aria-hidden="true"></span>Receber teletransporte
+          </button>
+        </div>
+      </section>
+
+      <!-- quem envia: código no display dos circuitos do tempo -->
+      <section class="panel panel--circuits" data-for="send-waiting send-ready send-transfer send-done">
+        <div class="circuit" data-hide-in="send-transfer">
+          <span class="circuit__label" id="code-label">Código do portal</span>
+          <div class="circuit__display" aria-labelledby="code-label">
+            <span class="seg-ghost" aria-hidden="true">~~~~~~</span>
+            <output class="seg-value" id="code-out"></output>
+          </div>
+          <div class="circuit__meta" data-show-in="send-waiting">
+            <span>expira em</span>
+            <span class="seg7" id="countdown">10:00</span>
+          </div>
+          <div class="circuit__actions" data-show-in="send-waiting">
+            <button class="chip" id="btn-copy-code" type="button">Copiar código</button>
+            <button class="chip" id="btn-copy-link" type="button">Copiar link</button>
+          </div>
+        </div>
+
+        <p class="status" id="send-status"></p>
+
+        <div class="drop-actions" data-show-in="send-ready send-done">
+          <label class="switch switch--primary" for="file-input">
+            <span class="led" aria-hidden="true"></span><span id="pick-label">Escolher arquivos</span>
+          </label>
+          <input id="file-input" type="file" multiple hidden />
+          <span class="hint">ou arraste para dentro do portal</span>
+        </div>
+      </section>
+
+      <!-- quem recebe: digitar o código -->
+      <section class="panel panel--circuits" data-for="recv-code">
+        <div class="circuit">
+          <label class="circuit__label" for="code-0">Digite o código que você recebeu</label>
+          <div class="code-input" id="code-input">
+            <input id="code-0" class="cell" inputmode="text" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="1" aria-label="Caractere 1" />
+            <input class="cell" inputmode="text" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="1" aria-label="Caractere 2" />
+            <input class="cell" inputmode="text" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="1" aria-label="Caractere 3" />
+            <input class="cell" inputmode="text" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="1" aria-label="Caractere 4" />
+            <input class="cell" inputmode="text" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="1" aria-label="Caractere 5" />
+            <input class="cell" inputmode="text" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="1" aria-label="Caractere 6" />
+          </div>
+          <p class="field-error" id="code-error" role="alert"></p>
+        </div>
+      </section>
+
+      <!-- quem recebe: conectando / esperando / oferta -->
+      <section class="panel" data-for="recv-connecting recv-wait recv-done">
+        <p class="status" id="recv-status"></p>
+      </section>
+
+      <section class="panel panel--offer" data-for="recv-offer">
+        <p class="status status--static" id="offer-title"></p>
+        <ul class="offer-list" id="offer-list"></ul>
+        <div class="switch-row">
+          <button class="switch switch--primary" id="btn-accept" type="button">
+            <span class="led" aria-hidden="true"></span>Receber arquivos
+          </button>
+          <button class="switch" id="btn-decline" type="button">Recusar</button>
+        </div>
+      </section>
+
+      <!-- transmissão nos dois lados -->
+      <section class="panel panel--transfer" data-for="send-transfer recv-transfer">
+        <div class="gauge">
+          <span class="gauge__file" id="transfer-file"></span>
+          <span class="gauge__pct"><span class="seg7" id="transfer-pct">0</span><small>%</small></span>
+        </div>
+        <div class="bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="transfer-bar">
+          <span class="bar__fill" id="transfer-fill"></span>
+        </div>
+        <div class="gauge__meta">
+          <span id="transfer-bytes"></span>
+          <span id="transfer-speed"></span>
+        </div>
+      </section>
+
+      <!-- erro -->
+      <section class="panel" data-for="error">
+        <p class="status status--error" id="error-status"></p>
+        <button class="switch switch--primary" id="btn-restart" type="button">
+          <span class="led" aria-hidden="true"></span>Abrir outro portal
+        </button>
+      </section>
+
+      <button class="link-btn" id="btn-close" type="button" data-hide-in="idle error">Fechar portal</button>
+    </main>
+
+    <footer class="foot">
+      <button class="link-btn" id="btn-privacy" type="button">Privacidade</button>
+      <span>Conexão direta e criptografada entre os navegadores</span>
+    </footer>
+
+    <div class="drop-veil" id="drop-veil" aria-hidden="true"><span>Solte para teletransportar</span></div>
+
+    <dialog class="privacy" id="privacy">
+      <h2>Privacidade</h2>
+      <p>
+        Os arquivos vão direto de um navegador para o outro, por uma conexão WebRTC criptografada.
+        O TransferNow não recebe nem guarda o conteúdo, nem os nomes dos arquivos.
+      </p>
+      <p>
+        Quando as redes não permitem a conexão direta, os dados passam por um retransmissor da Cloudflare,
+        ainda criptografados, sem serem armazenados.
+      </p>
+      <p>
+        Para segurança e auditoria registramos apenas eventos técnicos: portal aberto, conexão feita,
+        tamanho total e duração da transmissão. Endereços IP entram só como um código embaralhado (hash)
+        e os registros são apagados automaticamente.
+      </p>
+      <p>Não há cadastro, login, cookies de rastreamento nem anúncios.</p>
+      <form method="dialog"><button class="switch" type="submit">Entendi</button></form>
+    </dialog>
+
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

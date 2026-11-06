@@ -1,0 +1,44 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "transfernow",
+  "main": "src/worker/index.ts",
+  "compatibility_date": "2026-11-01",
+  "workers_dev": true,
+
+  // Site estático (gerado pelo Vite em dist/). Só /api/* passa pelo Worker antes.
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+
+  // Uma sala (Durable Object) por código de portal.
+  "durable_objects": {
+    "bindings": [{ "name": "ROOMS", "class_name": "PortalRoom" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["PortalRoom"] }],
+
+  // Limites contra quem tenta adivinhar códigos ou criar salas em massa.
+  "ratelimits": [
+    { "name": "JOIN_LIMITER", "namespace_id": "1001", "simple": { "limit": 20, "period": 60 } },
+    { "name": "CREATE_LIMITER", "namespace_id": "1002", "simple": { "limit": 30, "period": 60 } }
+  ],
+
+  // Logs de aplicação e auditoria (Workers Logs).
+  "observability": { "enabled": true, "head_sampling_rate": 1 },
+
+  // Domínio próprio transfernow.duia.com.br: ligado em Workers → transfernow → Settings → Domains.
+
+  // Variáveis definidas no painel do Cloudflare não são apagadas a cada deploy.
+  "keep_vars": true,
+  "vars": {
+    "ROOM_TTL_SECONDS": "600"
+  }
+  // Configure no painel (Workers → transfernow → Settings → Variables):
+  //   MAX_FILE_SIZE_MB    — tamanho máximo por arquivo em MB. -1 (ou ausente) = sem limite. 1024 = 1 GB.
+  // Segredos opcionais (wrangler secret put):
+  //   LOG_SALT            — sal para o hash de IP nos logs
+  //   TURN_KEY_ID         — ID da chave TURN do Cloudflare Realtime
+  //   TURN_KEY_API_TOKEN  — token da chave TURN
+}

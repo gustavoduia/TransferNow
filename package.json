@@ -1,0 +1,28 @@
+{
+  "name": "transfernow",
+  "version": "1.0.0",
+  "private": true,
+  "description": "TransferNow — transferência de arquivos P2P via portal temporal",
+  "type": "module",
+  "scripts": {
+    "dev": "vite build && wrangler dev",
+    "build": "npm run typecheck && vite build",
+    "typecheck": "tsc -p tsconfig.json && tsc -p src/client/tsconfig.json",
+    "deploy": "npm run build && wrangler deploy",
+    "test:e2e": "node tests/e2e.mjs"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "hash-wasm": "^4.12.0",
+    "three": "^0.187.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261106.1",
+    "@types/three": "^0.187.0",
+    "dseg": "^0.46.0",
+    "playwright-core": "^1.65.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.6",
+    "wrangler": "^4.158.0"
+  }
+}
