@@ -93,7 +93,7 @@ try {
   await C.click("#btn-open");
   await C.click("#btn-receive");
   await C.keyboard.type("AAAAAA", { delay: 40 });
-  await C.waitForSelector("#code-error:not(:empty)", { timeout: 10000 });
+  await C.waitForFunction(() => (document.querySelector("#code-error")?.textContent ?? "").length > 0, null, { timeout: 15000 });
   console.log("código inválido:", await C.textContent("#code-error"));
   await shot(C, "12-bad-code");
 

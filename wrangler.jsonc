@@ -4,6 +4,7 @@
   "main": "src/worker/index.ts",
   "compatibility_date": "2026-11-01",
   "workers_dev": true,
+  "preview_urls": false,
 
   // Site estático (gerado pelo Vite em dist/). Só /api/* passa pelo Worker antes.
   "assets": {
