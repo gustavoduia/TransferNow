@@ -7,6 +7,7 @@ export interface PublicConfig {
   ads: { rewardedUnit: string | null; onReceive: boolean; everyN: number };
   login: { email: boolean; google: boolean };
   billing: boolean;
+  mpPublicKey: string | null;
 }
 
 export interface Me {
@@ -52,6 +53,7 @@ const fallbackConfig: PublicConfig = {
   ads: { rewardedUnit: null, onReceive: false, everyN: 1 },
   login: { email: false, google: false },
   billing: false,
+  mpPublicKey: null,
 };
 
 export async function fetchConfig(): Promise<PublicConfig> {

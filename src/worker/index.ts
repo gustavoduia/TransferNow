@@ -2,7 +2,8 @@ import { isValidCode } from "../shared/code";
 import { ACCESS_LOG_RETENTION_MS, logAccess } from "./accesslog";
 import { adEvent, adminRoute, unsubscribe } from "./admin";
 import { currentUser, googleCallback, googleStart, isAdmin, logout, requestEmailLink, verifyEmailLink, type User } from "./auth";
-import { cancel, checkout, subscriptionView, syncMine, webhook } from "./billing";
+import { cancel, subscriptionView, syncMine, webhook } from "./billing";
+import { passMaintenance, passStatus, payOnce, payWithCard } from "./checkout";
 import { createCloud, describeByCode, downloadByCode, expireTransfers, isCloudCode, listMine, uploadRoute } from "./cloud";
 import { cloudCodeInUse, randomCode } from "./codes";
 import type { Env } from "./env";
@@ -93,7 +94,11 @@ export default {
         if (path === "/api/cloud/mine" && method === "GET") return await listMine(env, user);
         const up = path.match(/^\/api\/cloud\/([0-9a-f-]{36})(?:\/(.*))?$/);
         if (up) return await uploadRoute(request, env, user, up[1], up[2] ?? "");
-        if (path === "/api/billing/checkout" && method === "POST") return await checkout(request, env, user);
+        if (path === "/api/billing/card" && method === "POST") return await payWithCard(request, env, user);
+        if (path === "/api/billing/pix" && method === "POST") return await payOnce(request, env, user, "pix");
+        if (path === "/api/billing/boleto" && method === "POST") return await payOnce(request, env, user, "boleto");
+        const pass = path.match(/^\/api\/billing\/pass\/([0-9a-f-]{36})$/);
+        if (pass && method === "GET") return await passStatus(env, user, pass[1]);
         if (path === "/api/billing/sync" && method === "GET") return await syncMine(env, user);
         if (path === "/api/billing/cancel" && method === "POST") return await cancel(env, user);
       }
@@ -119,7 +124,8 @@ export default {
         // P2P que nunca terminou (aba fechada no meio) vira "abandonada" depois de 12h.
         env.DB.prepare("UPDATE transfers SET status = 'abandoned' WHERE kind = 'p2p' AND status = 'started' AND ts < ?").bind(now - 12 * 3600_000),
       ]);
-      await putSetting(env, "cron_last", { ts: now, expired });
+      const passes = await passMaintenance(env, env.SITE_URL ?? "https://transfernow.duia.com.br");
+      await putSetting(env, "cron_last", { ts: now, expired, ...passes });
     } catch (err) {
       await systemEvent(env, null, "error", "cron_failed", String(err).slice(0, 300));
     }
@@ -145,6 +151,7 @@ async function config(env: Env): Promise<Response> {
       },
       login: { email: !!env.EMAIL, google: !!env.GOOGLE_CLIENT_ID },
       billing: !!env.MP_ACCESS_TOKEN,
+      mpPublicKey: env.MP_PUBLIC_KEY || null,
     },
     200,
     { "Cache-Control": "public, max-age=60" },

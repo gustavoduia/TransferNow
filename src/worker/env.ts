@@ -25,6 +25,10 @@ export interface Env {
 
   MP_ACCESS_TOKEN?: string;
   MP_WEBHOOK_SECRET?: string;
+  /** Public Key do Mercado Pago (vai para o navegador, gera o token do cartão) */
+  MP_PUBLIC_KEY?: string;
+  /** Endereço do site, usado em e-mails enviados pela rotina agendada */
+  SITE_URL?: string;
   PRICE_STARTER?: string;
   PRICE_SCALE?: string;
   PRICE_PRO?: string;

@@ -49,6 +49,17 @@ BASE_URL=http://localhost:8787 npm run test:e2e   # P2P; precisa do Chrome insta
 SESSION=<cookie tn_sess de um assinante> npm run test:e2e:cloud
 ```
 
+## Pagamentos (Checkout Transparente do Mercado Pago)
+
+Tudo acontece dentro do site, sem redirecionar para o Mercado Pago:
+
+- **Cartão:** assinatura com renovação automática, mensal ou anual (`/preapproval` com `card_token_id`). Os campos do cartão são do Mercado Pago (iframes), então o número do cartão nunca passa pelo TransferNow.
+- **Pix:** pagamento avulso (`/v1/payments`, `pix`) que libera o plano por 30 dias ou 12 meses. QR Code e copia e cola na tela, confirmação em segundos.
+- **Boleto:** pagamento avulso (`bolbradesco`) com nome, CPF e endereço (CEP preenchido pelo ViaCEP). Vence em 3 dias e compensa em até 2 dias úteis.
+- Pix e boleto não renovam sozinhos: a rotina agendada avisa por e-mail 3 dias antes do fim. Pagar de novo antes do fim soma ao período restante.
+- Preços mensal e anual ficam em Painel → Planos.
+- Variáveis: `MP_ACCESS_TOKEN` (segredo), `MP_WEBHOOK_SECRET` (segredo), `MP_PUBLIC_KEY` (variável de texto). No Mercado Pago, o webhook `https://transfernow.duia.com.br/api/billing/webhook` precisa dos eventos **Planos e assinaturas** e **Pagamentos**.
+
 ## Planos
 
 | Plano | Volume/mês | Transferências/mês | Por arquivo | Nuvem | Anúncio |

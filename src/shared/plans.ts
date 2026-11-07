@@ -14,16 +14,18 @@ export interface Plan {
   ads: boolean;
   /** preço mensal em reais; null = sem preço definido */
   price: number | null;
+  /** preço anual em reais; null = sem opção anual */
+  priceYearly: number | null;
   /** aparece para assinatura */
   forSale: boolean;
   sort: number;
 }
 
 export const PLANS: Record<PlanId, Plan> = {
-  free: { id: "free", name: "Gratuito", monthlyGb: 5, monthlyTransfers: 10, maxFileGb: 5, cloudHours: 0, ads: true, price: null, forSale: false, sort: 0 },
-  starter: { id: "starter", name: "Starter", monthlyGb: 50, monthlyTransfers: 100, maxFileGb: 10, cloudHours: 24, ads: false, price: null, forSale: true, sort: 1 },
-  scale: { id: "scale", name: "Scale", monthlyGb: 200, monthlyTransfers: 200, maxFileGb: 50, cloudHours: 72, ads: false, price: null, forSale: true, sort: 2 },
-  pro: { id: "pro", name: "Pró", monthlyGb: -1, monthlyTransfers: -1, maxFileGb: -1, cloudHours: 168, ads: false, price: null, forSale: true, sort: 3 },
+  free: { id: "free", name: "Gratuito", monthlyGb: 5, monthlyTransfers: 10, maxFileGb: 5, cloudHours: 0, ads: true, price: null, priceYearly: null, forSale: false, sort: 0 },
+  starter: { id: "starter", name: "Starter", monthlyGb: 50, monthlyTransfers: 100, maxFileGb: 10, cloudHours: 24, ads: false, price: null, priceYearly: null, forSale: true, sort: 1 },
+  scale: { id: "scale", name: "Scale", monthlyGb: 200, monthlyTransfers: 200, maxFileGb: 50, cloudHours: 72, ads: false, price: null, priceYearly: null, forSale: true, sort: 2 },
+  pro: { id: "pro", name: "Pró", monthlyGb: -1, monthlyTransfers: -1, maxFileGb: -1, cloudHours: 168, ads: false, price: null, priceYearly: null, forSale: true, sort: 3 },
 };
 
 export const PAID_PLANS: PlanId[] = ["starter", "scale", "pro"];

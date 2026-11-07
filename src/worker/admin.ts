@@ -124,7 +124,11 @@ async function overview(c: Ctx): Promise<Response> {
       db.prepare("SELECT COUNT(*) AS n FROM users").first<{ n: number }>(),
       db.prepare("SELECT COUNT(*) AS n FROM users WHERE created_at >= ?").bind(from).first<{ n: number }>(),
       db.prepare("SELECT COUNT(*) AS n FROM users WHERE created_at >= ? AND created_at < ?").bind(prevFrom, from).first<{ n: number }>(),
-      db.prepare("SELECT plan, COUNT(*) AS n, COALESCE(SUM(amount),0) AS mrr FROM subscriptions WHERE status = 'authorized' GROUP BY plan").all<{ plan: string; n: number; mrr: number }>(),
+      db.prepare(`SELECT plan, SUM(n) AS n, SUM(mrr) AS mrr FROM (
+          SELECT plan, COUNT(*) AS n, COALESCE(SUM(CASE WHEN cycle = 'yearly' THEN amount / 12.0 ELSE amount END),0) AS mrr FROM subscriptions WHERE status = 'authorized' GROUP BY plan
+          UNION ALL
+          SELECT plan, COUNT(DISTINCT user_id) AS n, COALESCE(SUM(CASE WHEN cycle = 'yearly' THEN amount / 12.0 ELSE amount END),0) AS mrr FROM passes WHERE status = 'approved' AND starts_at <= ${now} AND ends_at > ${now} GROUP BY plan
+        ) GROUP BY plan`).all<{ plan: string; n: number; mrr: number }>(),
       db.prepare("SELECT COUNT(DISTINCT user_id) AS n FROM plan_grants WHERE revoked_at IS NULL AND starts_at <= ? AND ends_at > ?").bind(now, now).first<{ n: number }>(),
       db.prepare(`SELECT day, kind, COUNT(*) AS n, COALESCE(SUM(bytes),0) AS bytes FROM transfers WHERE day >= ? AND ${COMPLETED} GROUP BY day, kind ORDER BY day`).bind(fromDay).all<{ day: string; kind: string; n: number; bytes: number }>(),
       db.prepare(`SELECT COUNT(*) AS n, COALESCE(SUM(bytes),0) AS bytes FROM transfers WHERE day >= ? AND day < ? AND ${COMPLETED}`).bind(prevFromDay, fromDay).first<{ n: number; bytes: number }>(),
@@ -244,7 +248,7 @@ async function userDetail(c: Ctx, id: string): Promise<Response> {
   if (!user) return error("not_found", "Usuário não encontrado.", 404);
   const plans = await getPlans(env);
   const per = period();
-  const [plan, subs, pays, grants, transfers, notes, usage, sessions, cloud] = await Promise.all([
+  const [plan, subs, pays, grants, transfers, notes, usage, sessions, cloud, passes] = await Promise.all([
     activePlan(env, id, plans),
     env.DB.prepare("SELECT * FROM subscriptions WHERE user_id = ? ORDER BY created_at DESC").bind(id).all(),
     env.DB.prepare("SELECT * FROM payments WHERE user_id = ? ORDER BY created_at DESC LIMIT 50").bind(id).all(),
@@ -254,6 +258,7 @@ async function userDetail(c: Ctx, id: string): Promise<Response> {
     env.DB.prepare("SELECT bytes, transfers FROM usage WHERE subject = ? AND period = ?").bind(`u:${id}`, per).first(),
     env.DB.prepare("SELECT COUNT(*) AS n FROM sessions WHERE user_id = ? AND expires_at > ?").bind(id, Date.now()).first<{ n: number }>(),
     env.DB.prepare("SELECT id, code, status, file_count, total_bytes, created_at, expires_at FROM cloud_transfers WHERE user_id = ? ORDER BY created_at DESC LIMIT 20").bind(id).all(),
+    env.DB.prepare("SELECT id, payment_id, plan, cycle, method, amount, status, starts_at, ends_at, created_at FROM passes WHERE user_id = ? ORDER BY created_at DESC LIMIT 30").bind(id).all(),
   ]);
   return json({
     user,
@@ -267,6 +272,7 @@ async function userDetail(c: Ctx, id: string): Promise<Response> {
     grants: grants.results,
     transfers: transfers.results,
     cloud: cloud.results,
+    passes: passes.results,
     notes: notes.results,
   });
 }
@@ -399,15 +405,22 @@ async function finance(c: Ctx): Promise<Response> {
   const prevMonthStart = Date.parse(`${period(new Date(monthStart - DAY))}-01T03:00:00Z`);
   const yearAgo = now - 365 * DAY;
   const db = env.DB;
-  const [counts, mrr, revMonth, revPrev, byMonth, rejected, churned, abandoned] = await Promise.all([
+  const [counts, mrr, revMonth, revPrev, byMonth, rejected, churned, abandoned, passes] = await Promise.all([
     Promise.all(Object.entries(st).map(async ([k, cond]) => [k, (await db.prepare(`SELECT COUNT(*) AS n FROM subscriptions s WHERE ${cond}`).first<{ n: number }>())?.n ?? 0] as const)),
-    db.prepare("SELECT COALESCE(SUM(amount),0) AS v, COUNT(*) AS n FROM subscriptions WHERE status = 'authorized'").first<{ v: number; n: number }>(),
+    db.prepare(`SELECT (SELECT COALESCE(SUM(CASE WHEN cycle = 'yearly' THEN amount / 12.0 ELSE amount END),0) FROM subscriptions WHERE status = 'authorized') + (SELECT COALESCE(SUM(CASE WHEN cycle = 'yearly' THEN amount / 12.0 ELSE amount END),0) FROM passes WHERE status = 'approved' AND starts_at <= ${now} AND ends_at > ${now}) AS v,
+       (SELECT COUNT(*) FROM subscriptions WHERE status = 'authorized') + (SELECT COUNT(DISTINCT user_id) FROM passes WHERE status = 'approved' AND starts_at <= ${now} AND ends_at > ${now}) AS n`).first<{ v: number; n: number }>(),
     db.prepare("SELECT COALESCE(SUM(amount),0) AS v, COUNT(*) AS n FROM payments WHERE status = 'approved' AND paid_at >= ?").bind(monthStart).first<{ v: number; n: number }>(),
     db.prepare("SELECT COALESCE(SUM(amount),0) AS v FROM payments WHERE status = 'approved' AND paid_at >= ? AND paid_at < ?").bind(prevMonthStart, monthStart).first<{ v: number }>(),
     db.prepare("SELECT strftime('%Y-%m', (paid_at - 10800000) / 1000, 'unixepoch') AS month, COALESCE(SUM(amount),0) AS v, COUNT(*) AS n FROM payments WHERE status = 'approved' AND paid_at >= ? GROUP BY month ORDER BY month").bind(yearAgo).all<{ month: string; v: number; n: number }>(),
     db.prepare("SELECT COUNT(*) AS n FROM payments WHERE status IN ('rejected','cancelled') AND created_at >= ?").bind(monthStart).first<{ n: number }>(),
     db.prepare("SELECT COUNT(*) AS n FROM subscriptions WHERE status = 'cancelled' AND updated_at >= ?").bind(monthStart).first<{ n: number }>(),
     db.prepare("SELECT COUNT(*) AS n FROM subscriptions WHERE status = 'pending' AND created_at < ?").bind(now - DAY).first<{ n: number }>(),
+    db.prepare(
+      `SELECT (SELECT COUNT(*) FROM passes WHERE status = 'approved' AND starts_at <= ${now} AND ends_at > ${now}) AS active,
+        (SELECT COUNT(*) FROM passes WHERE status = 'pending') AS pending,
+        (SELECT COUNT(*) FROM passes WHERE status = 'approved' AND ends_at BETWEEN ${now} AND ${now + 7 * DAY}) AS ending,
+        (SELECT COUNT(*) FROM subscriptions WHERE status = 'authorized' AND cycle = 'yearly') AS yearly`,
+    ).first<{ active: number; pending: number; ending: number; yearly: number }>(),
   ]);
   const months: { month: string; revenue: number; payments: number }[] = [];
   const map = new Map(byMonth.results.map((r) => [r.month, r]));
@@ -421,7 +434,8 @@ async function finance(c: Ctx): Promise<Response> {
   const active = mrr?.n ?? 0;
   const lost = churned?.n ?? 0;
   return json({
-    counts: Object.fromEntries(counts),
+    passes,
+    counts: { ...Object.fromEntries(counts), passes: passes?.active ?? 0 },
     mrr: mrr?.v ?? 0,
     arpu: active ? (mrr?.v ?? 0) / active : 0,
     revenueMonth: revMonth?.v ?? 0,
@@ -439,8 +453,9 @@ async function subscriptions(c: Ctx): Promise<Response> {
   const { env, url } = c;
   const now = Date.now();
   const state = url.searchParams.get("state") ?? "active";
-  const cond = subState(now)[state] ?? "1=1";
   const p = page(url);
+  if (state === "passes") return passesList(c, p);
+  const cond = subState(now)[state] ?? "1=1";
   const sql = `SELECT s.id, s.plan, s.status, s.amount, s.next_payment_date, s.created_at, s.updated_at, u.email, u.id AS user_id,
      (SELECT COALESCE(SUM(amount),0) FROM payments pa WHERE pa.subscription_id = s.id AND pa.status = 'approved') AS paid_total
      FROM subscriptions s LEFT JOIN users u ON u.id = s.user_id WHERE ${cond} ORDER BY s.updated_at DESC`;
@@ -457,6 +472,25 @@ async function subscriptions(c: Ctx): Promise<Response> {
     env.DB.prepare(`SELECT COUNT(*) AS n FROM subscriptions s WHERE ${cond}`).first<{ n: number }>(),
   ]);
   return json({ subscriptions: rows.results, total: total?.n ?? 0, page: p, pageSize: PAGE });
+}
+
+/** Pagamentos avulsos (Pix e boleto) que liberam o plano por um período. */
+async function passesList(c: Ctx, p: number): Promise<Response> {
+  const sql = `SELECT p.id, p.plan, p.cycle, p.method, p.amount, p.status, p.starts_at, p.ends_at, p.created_at, u.email, u.id AS user_id
+     FROM passes p LEFT JOIN users u ON u.id = p.user_id ORDER BY p.created_at DESC`;
+  if (c.url.searchParams.get("format") === "csv") {
+    const { results } = await c.env.DB.prepare(sql).all<Record<string, number | string | null>>();
+    await audit(c, "export_passes", null, { rows: results.length });
+    return csv(
+      results.map((r) => ({ email: r.email, plano: r.plan, ciclo: r.cycle, forma: r.method, valor: r.amount, status: r.status, inicio: iso(r.starts_at as number), fim: iso(r.ends_at as number), criado_em: iso(r.created_at as number) })),
+      "pix-e-boleto.csv",
+    );
+  }
+  const [rows, total] = await Promise.all([
+    c.env.DB.prepare(`${sql} LIMIT ${PAGE} OFFSET ${p * PAGE}`).all(),
+    c.env.DB.prepare("SELECT COUNT(*) AS n FROM passes").first<{ n: number }>(),
+  ]);
+  return json({ passes: rows.results, total: total?.n ?? 0, page: p, pageSize: PAGE });
 }
 
 async function payments(c: Ctx): Promise<Response> {
@@ -514,6 +548,9 @@ async function updatePlan(c: Ctx, id: PlanId): Promise<Response> {
   const maxFileGb = int(b.maxFileGb, 1, 1_000_000);
   const cloudHours = Math.max(0, int(b.cloudHours, 0, 24 * 30) ?? 0);
   const priceNum = b.price === null || b.price === "" ? null : Number(String(b.price).replace(",", "."));
+  const yearlyNum = b.priceYearly == null || b.priceYearly === "" ? null : Number(String(b.priceYearly).replace(",", "."));
+  if (yearlyNum != null && (!Number.isFinite(yearlyNum) || yearlyNum < 1)) return error("bad_request", "Preço anual inválido.");
+  const priceYearly = yearlyNum == null || id === "free" ? null : Math.round(yearlyNum * 100) / 100;
   if (monthlyGb == null || monthlyTransfers == null || maxFileGb == null) return error("bad_request", "Preencha os limites com números (-1 para ilimitado).");
   if (priceNum != null && (!Number.isFinite(priceNum) || priceNum < 1)) return error("bad_request", "Preço inválido. Use um valor a partir de R$ 1,00.");
   if (id !== "free" && cloudHours > 0 && cloudHours > 192) return error("bad_request", "O prazo da nuvem vai até 8 dias (192 horas), o limite da regra de limpeza do armazenamento.");
@@ -523,18 +560,18 @@ async function updatePlan(c: Ctx, id: PlanId): Promise<Response> {
   const forSale = id === "free" ? false : !!b.forSale;
 
   await env.DB.prepare(
-    "UPDATE plans SET name = ?, monthly_gb = ?, monthly_transfers = ?, max_file_gb = ?, cloud_hours = ?, ads = ?, price = ?, for_sale = ?, updated_at = ? WHERE id = ?",
+    "UPDATE plans SET name = ?, monthly_gb = ?, monthly_transfers = ?, max_file_gb = ?, cloud_hours = ?, ads = ?, price = ?, price_yearly = ?, for_sale = ?, updated_at = ? WHERE id = ?",
   )
-    .bind(name, monthlyGb, monthlyTransfers, maxFileGb, cloudHours, ads ? 1 : 0, price, forSale ? 1 : 0, Date.now(), id)
+    .bind(name, monthlyGb, monthlyTransfers, maxFileGb, cloudHours, ads ? 1 : 0, price, priceYearly, forSale ? 1 : 0, Date.now(), id)
     .run();
   invalidatePlans();
-  await audit(c, "plan_update", id, { before, after: { name, monthlyGb, monthlyTransfers, maxFileGb, cloudHours, ads, price, forSale } });
+  await audit(c, "plan_update", id, { before, after: { name, monthlyGb, monthlyTransfers, maxFileGb, cloudHours, ads, price, priceYearly, forSale } });
 
   // Opcional: levar o novo preço às assinaturas ativas no Mercado Pago (próximas cobranças).
   let repriced = 0;
   let repriceFailed = 0;
   if (b.applyToActive === true && price && id !== "free" && env.MP_ACCESS_TOKEN) {
-    const { results } = await env.DB.prepare("SELECT id FROM subscriptions WHERE plan = ? AND status = 'authorized' AND (amount IS NULL OR amount != ?) LIMIT 40")
+    const { results } = await env.DB.prepare("SELECT id FROM subscriptions WHERE plan = ? AND status = 'authorized' AND cycle = 'monthly' AND (amount IS NULL OR amount != ?) LIMIT 40")
       .bind(id, price)
       .all<{ id: string }>();
     for (const s of results) {
@@ -902,6 +939,7 @@ async function system(c: Ctx): Promise<Response> {
     config: {
       "Mercado Pago (token)": !!env.MP_ACCESS_TOKEN,
       "Mercado Pago (assinatura do webhook)": !!env.MP_WEBHOOK_SECRET,
+      "Mercado Pago (Public Key, para o cartão)": !!env.MP_PUBLIC_KEY,
       "Login com Google": !!(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET),
       "Envio de e-mail ligado ao Worker (o domínio precisa estar ativado no Email Service)": !!env.EMAIL,
       "Anúncios (bloco definido)": !!ads.rewardedUnit,

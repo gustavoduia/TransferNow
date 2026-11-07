@@ -1,5 +1,6 @@
 import { GB, PAID_PLANS, type PlanId } from "../../shared/plans";
 import { api, ApiError, fetchMe, post, type Me, type PublicConfig } from "../api";
+import { initCheckout, openCheckout } from "./checkout";
 import { formatBytes } from "./effects";
 
 const $ = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector<T>(sel)!;
@@ -59,6 +60,7 @@ function renderPlans() {
       if (id === current) card.classList.add("is-current");
 
       const price = id === "free" ? "Grátis" : p.price && p.forSale ? `${money.format(p.price)}/mês` : "Em breve";
+      const yearly = id !== "free" && p.forSale && p.price && p.priceYearly ? `ou ${money.format(p.priceYearly)}/ano` : "";
       const features = [
         id === "free" ? "5 GB por mês" : p.monthlyGb < 0 ? "Volume ilimitado" : `${p.monthlyGb} GB por mês`,
         limitText(p.monthlyTransfers, "transferências por mês").replace("Ilimitado", "Transferências ilimitadas"),
@@ -67,9 +69,10 @@ function renderPlans() {
         p.ads ? "Um vídeo curto por envio e por download" : "Sem anúncios",
       ];
 
-      card.innerHTML = `<h3></h3><p class="plan__price"></p><ul></ul><div class="plan__cta"></div>`;
+      card.innerHTML = `<h3></h3><p class="plan__price"></p><p class="plan__yearly"></p><ul></ul><div class="plan__cta"></div>`;
       card.querySelector("h3")!.textContent = p.name;
       card.querySelector(".plan__price")!.textContent = price;
+      card.querySelector(".plan__yearly")!.textContent = yearly;
       const ul = card.querySelector("ul")!;
       for (const f of features) {
         const li = document.createElement("li");
@@ -104,16 +107,9 @@ async function subscribe(plan: PlanId, btn: HTMLButtonElement) {
     openLogin("Entre na sua conta para assinar. É rápido e não precisa de senha.");
     return;
   }
-  btn.disabled = true;
-  btn.lastChild!.textContent = "Abrindo o Mercado Pago…";
-  try {
-    const { url } = await post<{ url: string }>("/api/billing/checkout", { plan });
-    location.href = url;
-  } catch (err) {
-    btn.disabled = false;
-    btn.lastChild!.textContent = `Assinar ${config.plans[plan].name}`;
-    toast(err instanceof ApiError ? err.message : "Não foi possível abrir o pagamento.");
-  }
+  void btn;
+  $<HTMLDialogElement>("#dlg-plans").close();
+  openCheckout(plan, me.user.email);
 }
 
 export function openPlans() {
@@ -222,6 +218,10 @@ function bindAccount() {
 
 export async function initAccount(cfg: PublicConfig) {
   config = cfg;
+  initCheckout(cfg, async () => {
+    await refreshMe();
+    toast(`Plano ${config.plans[me?.plan ?? "free"]?.name ?? ""} ativo. Bons teletransportes.`);
+  });
   bindLogin();
   bindAccount();
   $("#btn-plans").addEventListener("click", openPlans);

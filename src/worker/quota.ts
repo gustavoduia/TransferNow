@@ -15,11 +15,15 @@ export async function activePlan(env: Env, userId: string | null | undefined, pl
   if (!userId) return "free";
   plans ??= await getPlans(env);
   const now = Date.now();
-  const [subs, grants] = await Promise.all([
+  const [subs, grants, passes] = await Promise.all([
     env.DB.prepare("SELECT plan, status, next_payment_date FROM subscriptions WHERE user_id = ? AND status IN ('authorized','cancelled','paused')")
       .bind(userId)
       .all<{ plan: PlanId; status: string; next_payment_date: number | null }>(),
     env.DB.prepare("SELECT plan FROM plan_grants WHERE user_id = ? AND revoked_at IS NULL AND starts_at <= ? AND ends_at > ?")
+      .bind(userId, now, now)
+      .all<{ plan: PlanId }>()
+      .catch(() => ({ results: [] as { plan: PlanId }[] })),
+    env.DB.prepare("SELECT plan FROM passes WHERE user_id = ? AND status = 'approved' AND starts_at <= ? AND ends_at > ?")
       .bind(userId, now, now)
       .all<{ plan: PlanId }>()
       .catch(() => ({ results: [] as { plan: PlanId }[] })),
@@ -30,6 +34,7 @@ export async function activePlan(env: Env, userId: string | null | undefined, pl
   };
   for (const s of subs.results) if (s.status === "authorized" || (s.next_payment_date ?? 0) > now) consider(s.plan);
   for (const g of grants.results) consider(g.plan);
+  for (const p of passes.results) consider(p.plan);
   return best;
 }
 

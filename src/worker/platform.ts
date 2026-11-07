@@ -19,6 +19,7 @@ interface PlanRow {
   cloud_hours: number;
   ads: number;
   price: number | null;
+  price_yearly?: number | null;
   for_sale: number;
   sort: number;
 }
@@ -40,6 +41,7 @@ export async function getPlans(env: Env): Promise<PlanMap> {
         cloudHours: r.cloud_hours,
         ads: !!r.ads,
         price: r.price,
+        priceYearly: r.price_yearly ?? null,
         forSale: !!r.for_sale,
         sort: r.sort,
       };

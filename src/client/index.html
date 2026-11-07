@@ -225,6 +225,80 @@
       <a class="link-btn" id="acc-admin" href="/admin" hidden>Abrir o painel de administração</a>
     </dialog>
 
+    <!-- checkout transparente (Mercado Pago) -->
+    <dialog class="sheet sheet--checkout" id="dlg-checkout" aria-labelledby="co-title">
+      <form method="dialog" class="sheet__close"><button class="link-btn" aria-label="Fechar">Fechar</button></form>
+      <h2 id="co-title">Assinar</h2>
+      <div id="co-body">
+        <div class="seg-toggle" id="co-cycle" role="group" aria-label="Período">
+          <button type="button" data-cycle="monthly" aria-pressed="true"><strong>Mensal</strong><span id="co-cycle-monthly"></span></button>
+          <button type="button" data-cycle="yearly" aria-pressed="false"><strong>Anual</strong><span id="co-cycle-yearly"></span></button>
+        </div>
+        <div class="co-tabs" role="tablist" aria-label="Forma de pagamento">
+          <button type="button" role="tab" data-method="card" aria-selected="true">Cartão</button>
+          <button type="button" role="tab" data-method="pix" aria-selected="false">Pix</button>
+          <button type="button" role="tab" data-method="boleto" aria-selected="false">Boleto</button>
+        </div>
+
+        <section id="co-card">
+          <form id="form-checkout" class="steel">
+            <label class="steel__field steel__field--wide">Número do cartão<div id="form-checkout__cardNumber" class="steel__input"></div></label>
+            <label class="steel__field">Validade<div id="form-checkout__expirationDate" class="steel__input"></div></label>
+            <label class="steel__field">Código de segurança<div id="form-checkout__securityCode" class="steel__input"></div></label>
+            <label class="steel__field steel__field--wide">Nome no cartão<input id="form-checkout__cardholderName" class="steel__input" autocomplete="cc-name" /></label>
+            <label class="steel__field" hidden>Documento<select id="form-checkout__identificationType"></select></label>
+            <label class="steel__field steel__field--wide">CPF do titular<input id="form-checkout__identificationNumber" class="steel__input" inputmode="numeric" /></label>
+            <select id="form-checkout__issuer" hidden></select>
+            <select id="form-checkout__installments" hidden></select>
+            <input id="form-checkout__cardholderEmail" type="email" hidden />
+          </form>
+          <button class="switch switch--primary co-submit" id="co-card-submit" type="submit" form="form-checkout"><span class="led" aria-hidden="true"></span><span>Assinar</span></button>
+          <p class="sheet__fine" id="co-card-note"></p>
+        </section>
+
+        <section id="co-pix" hidden>
+          <form id="pix-form" class="co-form">
+            <label>CPF<input id="pix-cpf" name="cpf" inputmode="numeric" autocomplete="off" required /></label>
+            <label>Nome completo <span class="muted">(opcional)</span><input name="name" autocomplete="name" /></label>
+            <button class="switch switch--primary co-submit" type="submit"><span class="led" aria-hidden="true"></span><span>Gerar Pix</span></button>
+          </form>
+          <div class="co-result" id="pix-result" hidden>
+            <img id="pix-qr" alt="QR Code do Pix" width="200" height="200" />
+            <label class="co-copy">Pix copia e cola<span><input id="pix-code" readonly /><button type="button" class="chip" data-copy="#pix-code">Copiar</button></span></label>
+            <p class="co-wait" id="pix-status"></p>
+          </div>
+          <p class="sheet__fine" id="co-pix-note"></p>
+        </section>
+
+        <section id="co-boleto" hidden>
+          <form id="bol-form" class="co-form co-form--grid">
+            <label class="span2">Nome completo<input name="name" autocomplete="name" required /></label>
+            <label class="span2">CPF<input id="bol-cpf" name="cpf" inputmode="numeric" required /></label>
+            <label>CEP<input id="bol-zip" name="zip" inputmode="numeric" autocomplete="postal-code" required /></label>
+            <label>Número<input id="bol-number" name="number" placeholder="S/N" /></label>
+            <label class="span2">Rua<input id="bol-street" name="street" autocomplete="address-line1" required /></label>
+            <label class="span2">Bairro<input id="bol-neighborhood" name="neighborhood" required /></label>
+            <label>Cidade<input id="bol-city" name="city" autocomplete="address-level2" required /></label>
+            <label>UF<input id="bol-uf" name="uf" maxlength="2" autocomplete="address-level1" required /></label>
+            <button class="switch switch--primary co-submit span2" type="submit"><span class="led" aria-hidden="true"></span><span>Gerar boleto</span></button>
+          </form>
+          <div class="co-result" id="bol-result" hidden>
+            <a class="switch switch--primary" id="bol-link" href="#" target="_blank" rel="noopener"><span class="led" aria-hidden="true"></span>Abrir o boleto</a>
+            <label class="co-copy" id="bol-code-row">Linha digitável<span><input id="bol-code" readonly /><button type="button" class="chip" data-copy="#bol-code">Copiar</button></span></label>
+            <p class="co-wait">O plano ativa sozinho quando o banco confirmar o pagamento (até 2 dias úteis). Avisamos por aqui na próxima vez que você abrir o site.</p>
+          </div>
+          <p class="sheet__fine" id="co-bol-note"></p>
+        </section>
+        <p class="field-error" id="co-error" role="alert"></p>
+        <p class="sheet__fine co-legal">Pagamento processado pelo Mercado Pago. Os dados do cartão vão direto para o Mercado Pago e não passam pelo TransferNow. Ao assinar, você concorda com os <a href="/termos" target="_blank">Termos de uso</a>.</p>
+      </div>
+      <div id="co-done" class="co-done" hidden>
+        <div class="co-done__ring" aria-hidden="true"></div>
+        <p id="co-done-msg"></p>
+        <form method="dialog"><button class="switch switch--primary"><span class="led" aria-hidden="true"></span>Começar a usar</button></form>
+      </div>
+    </dialog>
+
     <!-- vídeo recompensado (gratuito) -->
     <dialog class="sheet sheet--ad" id="dlg-ad" aria-labelledby="ad-title" data-phase="loading">
       <div class="ad-reel" aria-hidden="true"><span></span><span></span><span></span></div>

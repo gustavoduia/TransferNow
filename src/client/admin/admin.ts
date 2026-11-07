@@ -319,6 +319,7 @@ interface UserDetail {
   grants: Record<string, any>[];
   transfers: Record<string, any>[];
   cloud: Record<string, any>[];
+  passes: Record<string, any>[];
   notes: Record<string, any>[];
 }
 
@@ -348,13 +349,21 @@ async function renderUser(id: string) {
       ${tile("Último acesso", when(u.last_seen_at), u.marketing_opt_out ? "não recebe campanhas" : "recebe campanhas")}
     </section>
     <section class="panel"><h2>Assinaturas</h2>${table(d.subscriptions, [
-      ["Plano", (s) => PLAN_NAMES[s.plan] ?? s.plan],
+      ["Plano", (s) => `${PLAN_NAMES[s.plan] ?? s.plan}${s.cycle === "yearly" ? " anual" : ""}`],
       ["Situação", (s) => SUB_STATUS[s.status] ?? s.status],
       ["Valor", (s) => money(s.amount)],
       ["Próxima cobrança / fim", (s) => day(s.next_payment_date)],
       ["Criada", (s) => day(s.created_at)],
       ["ID no Mercado Pago", (s) => `<code>${e(s.id)}</code>`],
     ], "Nenhuma assinatura.")}</section>
+    <section class="panel"><h2>Pix e boleto</h2>${table(d.passes, [
+      ["Plano", (s) => `${PLAN_NAMES[s.plan] ?? s.plan} ${s.cycle === "yearly" ? "anual" : "mensal"}`],
+      ["Forma", (s) => (s.method === "pix" ? "Pix" : "Boleto")],
+      ["Valor", (s) => money(s.amount)],
+      ["Situação", (s) => ({ pending: "Aguardando pagamento", approved: "Pago", rejected: "Recusado", cancelled: "Cancelado", expired: "Não pago", refunded: "Estornado" })[s.status as string] ?? s.status],
+      ["Período", (s) => (s.starts_at ? `${day(s.starts_at)} a ${day(s.ends_at)}` : "—")],
+      ["Gerado", (s) => when(s.created_at)],
+    ], "Nenhum pagamento avulso.")}</section>
     <section class="panel"><h2>Cobranças</h2>${table(d.payments, [
       ["Data", (p) => when(p.paid_at ?? p.created_at)],
       ["Valor", (p) => money(p.amount)],
@@ -459,6 +468,7 @@ function table<T>(rows: T[], cols: [string, (r: T) => string][], empty: string):
 // ───────────────────────────── financeiro ─────────────────────────────
 
 interface Finance {
+  passes: { active: number; pending: number; ending: number; yearly: number } | null;
   counts: Record<string, number>;
   mrr: number;
   arpu: number;
@@ -491,11 +501,13 @@ async function renderFinance() {
       ${tile("Cancelamento no mês", pct(d.churnMonth), `${num(d.counts.expired)} expiradas no total`)}
       ${tile("Checkout abandonado", num(d.abandoned), "começaram a assinar há mais de 1 dia e não pagaram")}
       ${tile("Cobranças recusadas no mês", num(d.rejectedMonth), "cartão recusado ou sem saldo")}
+      ${tile("Pagos com Pix ou boleto", num(d.passes?.active ?? 0), `${num(d.passes?.ending ?? 0)} vencem em 7 dias · ${num(d.passes?.pending ?? 0)} aguardando pagamento`)}
+      ${tile("Assinaturas anuais", num(d.passes?.yearly ?? 0), "no cartão, renovação a cada 12 meses")}
     </section>
     <section class="grid2"><div id="rev-chart"></div><div id="rev-side" class="panel"></div></section>
     <section class="panel">
       <div class="tabs" role="tablist">
-        ${[["active", "Ativas"], ["cancelling", "Cancelando"], ["expired", "Expiradas"], ["pending", "Pendentes"], ["payments", "Transações"]]
+        ${[["active", "Cartão: ativas"], ["cancelling", "Cancelando"], ["expired", "Expiradas"], ["pending", "Pendentes"], ["passes", "Pix e boleto"], ["payments", "Transações"]]
           .map(([k, l]) => `<button role="tab" aria-selected="${finTab === k}" data-tab="${k}">${l}${k !== "payments" ? ` <span class="muted">${num(d.counts[k] ?? 0)}</span>` : ""}</button>`)
           .join("")}
       </div>
@@ -565,13 +577,32 @@ async function renderFinTab() {
     }));
     return;
   }
+  if (finTab === "passes") {
+    const d = await api<{ passes: Record<string, any>[]; total: number; page: number; pageSize: number }>(`/api/admin/subscriptions?state=passes&page=${finPage}`);
+    const PASS: Record<string, string> = { pending: "Aguardando pagamento", approved: "Pago", rejected: "Recusado", cancelled: "Cancelado", expired: "Não pago", refunded: "Estornado" };
+    box.innerHTML = `<div class="row"><a class="btn btn--sm" href="/api/admin/subscriptions?state=passes&format=csv">Baixar CSV</a></div>` +
+      table(d.passes, [
+        ["Conta", (s) => (s.user_id ? `<a href="#/usuarios/${s.user_id}">${e(s.email)}</a>` : "—")],
+        ["Plano", (s) => `${PLAN_NAMES[s.plan] ?? s.plan} ${s.cycle === "yearly" ? "anual" : "mensal"}`],
+        ["Forma", (s) => (s.method === "pix" ? "Pix" : "Boleto")],
+        ["Valor", (s) => money(s.amount)],
+        ["Situação", (s) => e(PASS[s.status] ?? s.status)],
+        ["Vale até", (s) => (s.ends_at ? day(s.ends_at) : "—")],
+        ["Gerado", (s) => when(s.created_at)],
+      ], "Nenhum pagamento com Pix ou boleto.");
+    box.append(pager(d.total, d.page, d.pageSize, (p) => {
+      finPage = p;
+      void renderFinTab();
+    }));
+    return;
+  }
   const d = await api<{ subscriptions: Record<string, any>[]; total: number; page: number; pageSize: number }>(`/api/admin/subscriptions?state=${finTab}&page=${finPage}`);
   box.innerHTML = `<div class="row"><a class="btn btn--sm" href="/api/admin/subscriptions?state=${finTab}&format=csv">Baixar CSV</a>${
     finTab === "expired" || finTab === "cancelling" || finTab === "pending" ? `<a class="btn btn--sm" href="#/retencao">Criar campanha de retenção</a>` : ""
   }</div>` +
     table(d.subscriptions, [
       ["Conta", (s) => (s.user_id ? `<a href="#/usuarios/${s.user_id}">${e(s.email)}</a>` : "—")],
-      ["Plano", (s) => PLAN_NAMES[s.plan] ?? s.plan],
+      ["Plano", (s) => `${PLAN_NAMES[s.plan] ?? s.plan}${s.cycle === "yearly" ? " anual" : ""}`],
       ["Situação", (s) => SUB_STATUS[s.status] ?? s.status],
       ["Valor", (s) => money(s.amount)],
       [finTab === "active" ? "Próxima cobrança" : "Fim do período", (s) => day(s.next_payment_date)],
@@ -595,6 +626,7 @@ interface PlanData {
   cloudHours: number;
   ads: boolean;
   price: number | null;
+  priceYearly: number | null;
   forSale: boolean;
 }
 
@@ -620,6 +652,7 @@ async function renderPlans() {
       const body = {
         name: f.get("name"),
         price: f.get("price") ?? null,
+        priceYearly: f.get("priceYearly") ?? null,
         forSale: f.get("forSale") === "on",
         monthlyGb: Number(f.get("monthlyGb")),
         monthlyTransfers: Number(f.get("monthlyTransfers")),
@@ -655,7 +688,8 @@ function planForm(p: PlanData): string {
   return `<form class="panel plan-form" data-plan="${p.id}">
     <div class="plan-form__head"><h2>${e(p.name)}</h2>${isFree ? `<span class="muted small">sem login</span>` : status(p.forSale && !!p.price, "À venda", p.price ? "Fora de venda" : "Sem preço")}</div>
     <div class="field"><label for="${p.id}-name">Nome exibido</label><input id="${p.id}-name" name="name" value="${e(p.name)}" maxlength="40" required /></div>
-    ${isFree ? "" : `<div class="field"><label for="${p.id}-price">Preço mensal</label><div class="input-unit"><span>R$</span><input id="${p.id}-price" name="price" inputmode="decimal" value="${p.price != null ? p.price.toFixed(2).replace(".", ",") : ""}" placeholder="19,90" /></div></div>`}
+    ${isFree ? "" : `<div class="field"><label for="${p.id}-price">Preço mensal</label><div class="input-unit"><span>R$</span><input id="${p.id}-price" name="price" inputmode="decimal" value="${p.price != null ? p.price.toFixed(2).replace(".", ",") : ""}" placeholder="19,90" /></div></div>
+    <div class="field"><label for="${p.id}-yearly">Preço anual</label><div class="input-unit"><span>R$</span><input id="${p.id}-yearly" name="priceYearly" inputmode="decimal" value="${p.priceYearly != null ? p.priceYearly.toFixed(2).replace(".", ",") : ""}" placeholder="${p.price ? (p.price * 10).toFixed(2).replace(".", ",") : "199,00"}" /></div><small>Vazio = sem opção anual. ${p.price ? `12 meses pelo preço de 10 = ${money(p.price * 10)}.` : ""}</small></div>`}
     ${n("monthlyGb", "Volume por mês", "GB")}
     ${n("monthlyTransfers", "Transferências por mês", "")}
     ${n("maxFileGb", "Tamanho máximo por arquivo", "GB")}

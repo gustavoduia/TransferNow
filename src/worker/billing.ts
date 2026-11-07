@@ -3,7 +3,8 @@ import type { User } from "./auth";
 import type { Env } from "./env";
 import { error, json, readJson } from "./http";
 import { log } from "./log";
-import { getPlans, systemEvent } from "./platform";
+import { syncPayment } from "./checkout";
+import { systemEvent } from "./platform";
 
 const MP_API = "https://api.mercadopago.com";
 
@@ -37,61 +38,23 @@ export async function mp<T>(env: Env, path: string, init: RequestInit = {}): Pro
   return JSON.parse(text) as T;
 }
 
-/** POST /api/billing/checkout { plan } — cria a assinatura e devolve o link de pagamento. */
-export async function checkout(request: Request, env: Env, user: User): Promise<Response> {
-  if (!env.MP_ACCESS_TOKEN) return error("billing_unavailable", "As assinaturas ainda não estão abertas.", 503);
-  const body = await readJson<{ plan?: PlanId }>(request);
-  const plan = body?.plan;
-  if (!plan || !PAID_PLANS.includes(plan)) return error("bad_plan", "Plano inválido.");
-  const p = (await getPlans(env))[plan];
-  if (!p.forSale) return error("not_for_sale", "Este plano não está disponível para assinatura no momento.", 409);
-  const amount = p.price;
-  if (!amount) return error("price_missing", "O preço deste plano ainda não foi definido.", 503);
-
-  const origin = new URL(request.url).origin;
-  try {
-    const pre = await mp<Preapproval>(env, "/preapproval", {
-      method: "POST",
-      body: JSON.stringify({
-        reason: `TransferNow ${p.name}`,
-        external_reference: `${user.id}|${plan}`,
-        payer_email: user.email,
-        auto_recurring: { frequency: 1, frequency_type: "months", transaction_amount: amount, currency_id: "BRL" },
-        back_url: `${origin}/?assinatura=retorno`,
-        status: "pending",
-      }),
-    });
-    const now = Date.now();
-    await env.DB.prepare(
-      "INSERT INTO subscriptions (id, user_id, plan, status, amount, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO NOTHING",
-    )
-      .bind(pre.id, user.id, plan, pre.status ?? "pending", amount, now, now)
-      .run();
-    log("audit", "checkout_started", { plan, amount });
-    return json({ url: pre.init_point });
-  } catch (err) {
-    log("app", "checkout_failed", { level: "error", message: String(err).slice(0, 300) });
-    await systemEvent(env, null, "error", "checkout_failed", String(err).slice(0, 300));
-    return error("checkout_failed", "O Mercado Pago não respondeu. Tente de novo em instantes.", 502);
-  }
-}
-
 /** Consulta a assinatura no Mercado Pago (fonte da verdade) e grava o estado. */
 export async function syncPreapproval(env: Env, id: string, withPayments = false): Promise<void> {
   const pre = await mp<Preapproval>(env, `/preapproval/${encodeURIComponent(id)}`);
-  const [userId, plan] = String(pre.external_reference ?? "").split("|") as [string, PlanId];
+  const [userId, plan, cycleRaw] = String(pre.external_reference ?? "").split("|") as [string, PlanId, string?];
+  const cycle = cycleRaw === "yearly" ? "yearly" : "monthly";
   if (!userId || !PAID_PLANS.includes(plan)) return;
   const user = await env.DB.prepare("SELECT id FROM users WHERE id = ?").bind(userId).first();
   if (!user) return;
   const next = pre.next_payment_date ? Date.parse(pre.next_payment_date) : null;
   const now = Date.now();
   await env.DB.prepare(
-    `INSERT INTO subscriptions (id, user_id, plan, status, amount, next_payment_date, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO subscriptions (id, user_id, plan, status, amount, next_payment_date, cycle, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET status = excluded.status, amount = excluded.amount,
        next_payment_date = excluded.next_payment_date, updated_at = excluded.updated_at`,
   )
-    .bind(pre.id, userId, plan, pre.status, pre.auto_recurring?.transaction_amount ?? null, next, now, now)
+    .bind(pre.id, userId, plan, pre.status, pre.auto_recurring?.transaction_amount ?? null, next, cycle, now, now)
     .run();
   // Ao ativar um plano novo, cancela assinaturas antigas autorizadas (troca de plano).
   if (pre.status === "authorized") {
@@ -171,6 +134,9 @@ export async function webhook(request: Request, env: Env, ctx: ExecutionContext)
           }
         } else if (type.includes("preapproval")) {
           await syncPreapproval(env, dataId);
+        } else if (type === "payment" || type.startsWith("payment")) {
+          // Pix e boleto (pagamentos avulsos). Pagamentos de assinatura chegam como authorized_payment.
+          await syncPayment(env, dataId);
         }
       } catch (err) {
         log("app", "webhook_sync_failed", { level: "error", type, message: String(err).slice(0, 200) });
