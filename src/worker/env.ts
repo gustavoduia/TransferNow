@@ -36,6 +36,11 @@ export interface Env {
   /** Caminho do bloco rewarded no Google Ad Manager (padrão; o painel pode trocar) */
   ADS_REWARDED_UNIT?: string;
 
+  /** ID de editor do AdSense (ex.: pub-1234567890123456): gera o ads.txt e a tag de verificação */
+  ADSENSE_PUB_ID?: string;
+  /** Endereço principal do site; outros domínios apontados para o Worker redirecionam para ele */
+  SITE_HOST?: string;
+
   /** E-mails com acesso total ao painel, separados por vírgula */
   ADMIN_EMAILS?: string;
 }

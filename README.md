@@ -115,7 +115,7 @@ O deploy é feito pelo **Workers Builds** da Cloudflare: cada push na `main` rod
 1. **E-mail do link de acesso:** Cloudflare → Compute → Email Service → Email Sending → *Onboard Domain* → `duia.com.br`. Remetente: `transfernow@duia.com.br` (variável `EMAIL_FROM`).
 2. **Google:** Google Cloud Console → APIs e serviços → Credenciais → ID do cliente OAuth (aplicativo da Web). URI de redirecionamento: `https://transfernow.duia.com.br/api/auth/google/callback`.
 3. **Mercado Pago:** Suas integrações → criar aplicação → credenciais de produção (`MP_ACCESS_TOKEN`). Em Webhooks, URL `https://transfernow.duia.com.br/api/billing/webhook` com os eventos de **Planos e assinaturas**; copie a assinatura secreta para `MP_WEBHOOK_SECRET`. O webhook sempre reconsulta a assinatura na API antes de liberar um plano.
-4. **Anúncios:** conta no AdSense aprovada para `duia.com.br` → Google Ad Manager → bloco de anúncios do tipo *Rewarded* para web → desative a proteção "Block non-instream video ads" → coloque o caminho do bloco em `ADS_REWARDED_UNIT`.
+4. **Anúncios:** conta no AdSense para `duia.com.br` (variável `ADSENSE_PUB_ID` gera o `ads.txt` e a tag de verificação; o domínio `duia.com.br` deve apontar para este Worker como domínio personalizado, que redireciona para o site) → Google Ad Manager → bloco *Rewarded* para web → desative a proteção "Block non-instream video ads" → caminho do bloco em Painel → Anúncios.
 
 ### Registros de acesso (Marco Civil, art. 15)
 

@@ -11,7 +11,7 @@
     "directory": "./dist",
     "binding": "ASSETS",
     "not_found_handling": "single-page-application",
-    "run_worker_first": ["/api/*"]
+    "run_worker_first": ["/api/*", "/ads.txt", "/"]
   },
 
   // Uma sala (Durable Object) por código de portal.
@@ -59,6 +59,7 @@
   //   PRICE_STARTER, PRICE_SCALE, PRICE_PRO — preço mensal em reais (ex.: 19.90)
   //   ADS_REWARDED_UNIT   — bloco rewarded do Google Ad Manager (ex.: /1234567/transfernow_rewarded)
   //   GOOGLE_CLIENT_ID    — login com Google
+  //   ADSENSE_PUB_ID      — ID de editor do AdSense (pub-…): ads.txt e tag de verificação
   // Segredos opcionais (wrangler secret put):
   //   LOG_SALT            — sal para o hash de IP nos logs
   //   TURN_KEY_ID         — ID da chave TURN do Cloudflare Realtime

@@ -28,7 +28,29 @@ export default {
     const path = url.pathname;
     const method = request.method;
     try {
-      if (!path.startsWith("/api/")) return env.ASSETS.fetch(request);
+      const pub = (env.ADSENSE_PUB_ID ?? "").trim().replace(/^ca-/, "");
+      // ads.txt: autoriza o Google a vender anúncios neste domínio (vale para duia.com.br e subdomínios).
+      if (path === "/ads.txt") {
+        if (!/^pub-\d{10,20}$/.test(pub)) return new Response("", { status: 404 });
+        return new Response(`google.com, ${pub}, DIRECT, f08c47fec0942fa0\n`, {
+          headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "public, max-age=3600" },
+        });
+      }
+      // Domínio principal (duia.com.br) ou outro apontado para cá: leva para o endereço do site.
+      const siteHost = env.SITE_HOST ?? "transfernow.duia.com.br";
+      if (url.hostname !== siteHost && !url.hostname.endsWith(".workers.dev") && url.hostname !== "localhost" && url.hostname !== "127.0.0.1") {
+        return Response.redirect(`https://${siteHost}${path}${url.search}`, 301);
+      }
+      if (!path.startsWith("/api/")) {
+        const res = await env.ASSETS.fetch(request);
+        // Tag de verificação do AdSense na página inicial.
+        if (/^pub-\d{10,20}$/.test(pub) && (res.headers.get("Content-Type") ?? "").includes("text/html")) {
+          return new HTMLRewriter()
+            .on("head", { element: (el) => void el.append(`<meta name="google-adsense-account" content="ca-${pub}" />`, { html: true }) })
+            .transform(res);
+        }
+        return res;
+      }
 
       // Webhook do Mercado Pago vem de fora; todo o resto que escreve precisa vir do próprio site.
       if (path === "/api/billing/webhook" && method === "POST") return await webhook(request, env, ctx);
