@@ -1,11 +1,21 @@
 import type { Env } from "./env";
 import { cookie, error, getCookie, json, randomToken, readJson, redirect, sha256Hex } from "./http";
 import { log } from "./log";
+import { systemEvent } from "./platform";
 
 export interface User {
   id: string;
   email: string;
   name: string | null;
+  role: string;
+  status: string;
+}
+
+/** Administrador: papel "admin" no banco ou e-mail listado em ADMIN_EMAILS. */
+export function isAdmin(user: User | null, env: Env): boolean {
+  if (!user || user.status !== "active") return false;
+  const list = (env.ADMIN_EMAILS ?? "").split(",").map((e) => e.trim().toLowerCase()).filter(Boolean);
+  return user.role === "admin" || list.includes(user.email.toLowerCase());
 }
 
 const SESSION_COOKIE = "tn_sess";
@@ -17,11 +27,12 @@ export async function currentUser(request: Request, env: Env): Promise<User | nu
   const token = getCookie(request, SESSION_COOKIE);
   if (!token) return null;
   const row = await env.DB.prepare(
-    "SELECT u.id, u.email, u.name FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.id_hash = ? AND s.expires_at > ?",
+    "SELECT u.id, u.email, u.name, u.role, u.status FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.id_hash = ? AND s.expires_at > ?",
   )
     .bind(await sha256Hex(token), Date.now())
     .first<User>();
-  return row ?? null;
+  // Conta bloqueada ou banida perde a sessão na hora.
+  return row && row.status === "active" ? row : null;
 }
 
 async function startSession(env: Env, userId: string): Promise<string> {
@@ -33,11 +44,22 @@ async function startSession(env: Env, userId: string): Promise<string> {
   return cookie(SESSION_COOKIE, token, SESSION_DAYS * 86400);
 }
 
-async function upsertUser(env: Env, email: string, name: string | null, googleSub: string | null): Promise<string> {
+async function emailBanned(env: Env, email: string): Promise<boolean> {
+  const row = await env.DB.prepare("SELECT 1 AS x FROM bans WHERE kind = 'email' AND value = ? AND (expires_at IS NULL OR expires_at > ?) LIMIT 1")
+    .bind(email.trim().toLowerCase(), Date.now())
+    .first()
+    .catch(() => null);
+  return !!row;
+}
+
+/** Cria ou encontra a conta. Devolve null se a conta ou o e-mail estiverem bloqueados. */
+async function upsertUser(env: Env, email: string, name: string | null, googleSub: string | null): Promise<string | null> {
   const normalized = email.trim().toLowerCase();
-  const existing = await env.DB.prepare("SELECT id FROM users WHERE email = ? OR (google_sub IS NOT NULL AND google_sub = ?)")
+  if (await emailBanned(env, normalized)) return null;
+  const existing = await env.DB.prepare("SELECT id, status FROM users WHERE email = ? OR (google_sub IS NOT NULL AND google_sub = ?)")
     .bind(normalized, googleSub)
-    .first<{ id: string }>();
+    .first<{ id: string; status: string }>();
+  if (existing && existing.status !== "active") return null;
   if (existing) {
     if (googleSub || name) {
       await env.DB.prepare("UPDATE users SET google_sub = COALESCE(google_sub, ?), name = COALESCE(name, ?) WHERE id = ?")
@@ -56,10 +78,12 @@ async function upsertUser(env: Env, email: string, name: string | null, googleSu
 
 /** POST /api/auth/email — envia o link de acesso. Responde igual exista a conta ou não. */
 export async function requestEmailLink(request: Request, env: Env): Promise<Response> {
-  const body = await readJson<{ email?: string }>(request);
+  const body = await readJson<{ email?: string; next?: string }>(request);
   const email = body?.email?.trim().toLowerCase() ?? "";
   if (!EMAIL_RE.test(email)) return error("bad_email", "Digite um e-mail válido.");
   if (!env.EMAIL) return error("email_unavailable", "O login por e-mail ainda não está disponível. Use o Google.", 503);
+  // E-mail banido: responde igual, sem enviar nada.
+  if (await emailBanned(env, email)) return json({ ok: true });
 
   const token = randomToken();
   await env.DB.prepare("INSERT INTO login_tokens (token_hash, email, expires_at) VALUES (?, ?, ?)")
@@ -67,7 +91,7 @@ export async function requestEmailLink(request: Request, env: Env): Promise<Resp
     .run();
 
   const origin = new URL(request.url).origin;
-  const link = `${origin}/api/auth/verify?token=${encodeURIComponent(token)}`;
+  const link = `${origin}/api/auth/verify?token=${encodeURIComponent(token)}${body?.next === "admin" ? "&next=admin" : ""}`;
   try {
     await env.EMAIL.send({
       from: { email: env.EMAIL_FROM ?? "transfernow@duia.com.br", name: "TransferNow" },
@@ -78,6 +102,7 @@ export async function requestEmailLink(request: Request, env: Env): Promise<Resp
     });
   } catch (err) {
     log("app", "email_send_failed", { level: "error", message: String(err).slice(0, 200) });
+    await systemEvent(env, null, "error", "email_send_failed", String(err).slice(0, 300));
     return error("email_failed", "Não conseguimos enviar o e-mail agora. Tente de novo em alguns minutos.", 502);
   }
   return json({ ok: true });
@@ -93,7 +118,9 @@ export async function verifyEmailLink(request: Request, env: Env): Promise<Respo
   if (!row || row.used_at || row.expires_at < Date.now()) return redirect("/?login=expirado");
   await env.DB.prepare("UPDATE login_tokens SET used_at = ? WHERE token_hash = ?").bind(Date.now(), hash).run();
   const userId = await upsertUser(env, row.email, null, null);
-  return redirect("/?login=ok", { "Set-Cookie": await startSession(env, userId) });
+  if (!userId) return redirect("/?login=bloqueado");
+  const next = new URL(request.url).searchParams.get("next") === "admin" ? "/admin" : "/?login=ok";
+  return redirect(next, { "Set-Cookie": await startSession(env, userId) });
 }
 
 /** GET /api/auth/google — redireciona para o consentimento do Google. */
@@ -142,6 +169,7 @@ export async function googleCallback(request: Request, env: Env): Promise<Respon
     return redirect("/?login=falhou", { "Set-Cookie": clear });
   }
   const userId = await upsertUser(env, claims.email, claims.name ?? null, claims.sub);
+  if (!userId) return redirect("/?login=bloqueado", { "Set-Cookie": clear });
   return redirect("/?login=ok", { "Set-Cookie": [clear, await startSession(env, userId)] });
 }
 

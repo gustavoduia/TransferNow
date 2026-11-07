@@ -50,7 +50,9 @@
   "keep_vars": true,
   "vars": {
     "ROOM_TTL_SECONDS": "600",
-    "EMAIL_FROM": "transfernow@duia.com.br"
+    "EMAIL_FROM": "transfernow@duia.com.br",
+    // Acesso total ao painel /admin (outros admins podem ser promovidos pelo próprio painel)
+    "ADMIN_EMAILS": "gustavogdv@gmail.com,gustavoduia@icloud.com"
   }
   // Configure no painel (Workers → transfernow → Settings → Variables):
   //   MAX_FILE_SIZE_MB    — limite extra por arquivo no plano gratuito, em MB (-1 = só o limite do plano, 5 GB)

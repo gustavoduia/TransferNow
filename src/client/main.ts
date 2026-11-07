@@ -154,6 +154,7 @@ async function sendBatch(files: File[]) {
   if (!sender?.ready || files.length === 0) return;
   const allowed = await reserveQuota(files, $("#send-status"));
   if (!allowed) return;
+  const ref = allowed.transferId;
   if (allowed.ads) {
     const outcome = await showRewarded(config.ads.rewardedUnit, "send", openPlans);
     if (outcome === "aborted") return;
@@ -172,7 +173,7 @@ async function sendBatch(files: File[]) {
         typewrite($("#send-status"), "Teletransportando…");
       }
       meter.update(p);
-    });
+    }, ref);
     meter.stop();
     if (result === "done") {
       scene.complete();
@@ -195,9 +196,9 @@ async function sendBatch(files: File[]) {
 }
 
 /** Confere e consome a cota no servidor. Devolve null (e explica) quando não pode enviar. */
-async function reserveQuota(files: File[], statusEl: HTMLElement): Promise<{ ads: boolean } | null> {
+async function reserveQuota(files: File[], statusEl: HTMLElement): Promise<{ ads: boolean; transferId: string } | null> {
   try {
-    const r = await post<{ ok: true; ads: boolean }>("/api/transfers/reserve", { sizes: files.map((f) => f.size) });
+    const r = await post<{ ok: true; ads: boolean; transferId: string }>("/api/transfers/reserve", { sizes: files.map((f) => f.size) });
     void refreshMe();
     return r;
   } catch (err) {
@@ -456,8 +457,8 @@ let meter: ReturnType<typeof startMeter> | null = null;
 async function acceptOffer() {
   if (cloudOffer) return acceptCloud();
   if (!pendingOffer || !receiver) return;
-  // Anúncio só quando as duas pontas são do plano gratuito.
-  if (!receiver.senderPaid && !isPaidUser()) {
+  // Anúncio só quando as duas pontas são do plano gratuito (e conforme a frequência do painel).
+  if (!receiver.senderPaid && !isPaidUser() && config.ads.onReceive && receiveAdTurn()) {
     const outcome = await showRewarded(config.ads.rewardedUnit, "receive", openPlans);
     if (outcome === "aborted") return;
   }
@@ -468,6 +469,18 @@ async function acceptOffer() {
   scene.teleport("out");
   setState("recv-transfer");
   meter = startMeter(offer.files.length === 1 ? offer.files[0].name : `${offer.files.length} arquivos`);
+}
+
+/** Frequência do vídeo para quem recebe: a cada N downloads neste aparelho. */
+function receiveAdTurn(): boolean {
+  let n = 0;
+  try {
+    n = Number(localStorage.getItem("tn_recv_count") ?? "0") + 1;
+    localStorage.setItem("tn_recv_count", String(n));
+  } catch {
+    return true;
+  }
+  return n % Math.max(1, config.ads.everyN) === 0;
 }
 
 async function acceptCloud() {

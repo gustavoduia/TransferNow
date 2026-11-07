@@ -1,8 +1,9 @@
-import { PAID_PLANS, PLANS, type PlanId } from "../shared/plans";
+import { PAID_PLANS, type PlanId } from "../shared/plans";
 import type { User } from "./auth";
 import type { Env } from "./env";
 import { error, json, readJson } from "./http";
 import { log } from "./log";
+import { getPlans, systemEvent } from "./platform";
 
 const MP_API = "https://api.mercadopago.com";
 
@@ -15,15 +16,18 @@ interface Preapproval {
   auto_recurring?: { transaction_amount?: number };
 }
 
-export function prices(env: Env): Record<Exclude<PlanId, "free">, number | null> {
-  const p = (v?: string) => {
-    const n = Number(String(v ?? "").replace(",", "."));
-    return Number.isFinite(n) && n > 0 ? Math.round(n * 100) / 100 : null;
-  };
-  return { starter: p(env.PRICE_STARTER), scale: p(env.PRICE_SCALE), pro: p(env.PRICE_PRO) };
+interface AuthorizedPayment {
+  id: number | string;
+  preapproval_id?: string;
+  transaction_amount?: number;
+  status?: string;
+  debit_date?: string;
+  date_created?: string;
+  last_modified?: string;
+  payment?: { id?: number; status?: string; status_detail?: string };
 }
 
-async function mp<T>(env: Env, path: string, init: RequestInit = {}): Promise<T> {
+export async function mp<T>(env: Env, path: string, init: RequestInit = {}): Promise<T> {
   const res = await fetch(`${MP_API}${path}`, {
     ...init,
     headers: { Authorization: `Bearer ${env.MP_ACCESS_TOKEN}`, "Content-Type": "application/json", ...(init.headers ?? {}) },
@@ -39,7 +43,9 @@ export async function checkout(request: Request, env: Env, user: User): Promise<
   const body = await readJson<{ plan?: PlanId }>(request);
   const plan = body?.plan;
   if (!plan || !PAID_PLANS.includes(plan)) return error("bad_plan", "Plano inválido.");
-  const amount = prices(env)[plan as Exclude<PlanId, "free">];
+  const p = (await getPlans(env))[plan];
+  if (!p.forSale) return error("not_for_sale", "Este plano não está disponível para assinatura no momento.", 409);
+  const amount = p.price;
   if (!amount) return error("price_missing", "O preço deste plano ainda não foi definido.", 503);
 
   const origin = new URL(request.url).origin;
@@ -47,7 +53,7 @@ export async function checkout(request: Request, env: Env, user: User): Promise<
     const pre = await mp<Preapproval>(env, "/preapproval", {
       method: "POST",
       body: JSON.stringify({
-        reason: `TransferNow ${PLANS[plan].name}`,
+        reason: `TransferNow ${p.name}`,
         external_reference: `${user.id}|${plan}`,
         payer_email: user.email,
         auto_recurring: { frequency: 1, frequency_type: "months", transaction_amount: amount, currency_id: "BRL" },
@@ -65,12 +71,13 @@ export async function checkout(request: Request, env: Env, user: User): Promise<
     return json({ url: pre.init_point });
   } catch (err) {
     log("app", "checkout_failed", { level: "error", message: String(err).slice(0, 300) });
+    await systemEvent(env, null, "error", "checkout_failed", String(err).slice(0, 300));
     return error("checkout_failed", "O Mercado Pago não respondeu. Tente de novo em instantes.", 502);
   }
 }
 
 /** Consulta a assinatura no Mercado Pago (fonte da verdade) e grava o estado. */
-export async function syncPreapproval(env: Env, id: string): Promise<void> {
+export async function syncPreapproval(env: Env, id: string, withPayments = false): Promise<void> {
   const pre = await mp<Preapproval>(env, `/preapproval/${encodeURIComponent(id)}`);
   const [userId, plan] = String(pre.external_reference ?? "").split("|") as [string, PlanId];
   if (!userId || !PAID_PLANS.includes(plan)) return;
@@ -93,11 +100,46 @@ export async function syncPreapproval(env: Env, id: string): Promise<void> {
       .all<{ id: string }>();
     for (const old of results) await cancelPreapproval(env, old.id).catch(() => {});
   }
+  if (withPayments) await syncPaymentsOf(env, pre.id).catch(() => {});
   log("audit", "subscription_sync", { plan, status: pre.status });
 }
 
-async function cancelPreapproval(env: Env, id: string): Promise<void> {
+/** Grava uma cobrança (authorized payment) no financeiro. */
+async function storePayment(env: Env, ap: AuthorizedPayment): Promise<void> {
+  if (!ap.preapproval_id) return;
+  const sub = await env.DB.prepare("SELECT user_id, plan FROM subscriptions WHERE id = ?")
+    .bind(ap.preapproval_id)
+    .first<{ user_id: string; plan: string }>();
+  const status = ap.payment?.status ?? ap.status ?? "unknown";
+  const paidAt = status === "approved" ? Date.parse(ap.debit_date ?? ap.last_modified ?? ap.date_created ?? "") || Date.now() : null;
+  const now = Date.now();
+  await env.DB.prepare(
+    `INSERT INTO payments (id, subscription_id, user_id, plan, amount, status, paid_at, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET status = excluded.status, paid_at = COALESCE(excluded.paid_at, payments.paid_at), amount = excluded.amount, updated_at = excluded.updated_at`,
+  )
+    .bind(String(ap.id), ap.preapproval_id, sub?.user_id ?? null, sub?.plan ?? null, ap.transaction_amount ?? 0, status, paidAt, Date.parse(ap.date_created ?? "") || now, now)
+    .run();
+}
+
+/** Busca todas as cobranças de uma assinatura (usado na sincronização pelo painel). */
+export async function syncPaymentsOf(env: Env, preapprovalId: string): Promise<number> {
+  const res = await mp<{ results?: AuthorizedPayment[] }>(env, `/authorized_payments/search?preapproval_id=${encodeURIComponent(preapprovalId)}&limit=100`);
+  for (const ap of res.results ?? []) await storePayment(env, { ...ap, preapproval_id: ap.preapproval_id ?? preapprovalId });
+  return res.results?.length ?? 0;
+}
+
+export async function cancelPreapproval(env: Env, id: string): Promise<void> {
   await mp(env, `/preapproval/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify({ status: "cancelled" }) });
+  await syncPreapproval(env, id);
+}
+
+/** Muda o valor das próximas cobranças de uma assinatura ativa. */
+export async function repricePreapproval(env: Env, id: string, amount: number): Promise<void> {
+  await mp(env, `/preapproval/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    body: JSON.stringify({ auto_recurring: { transaction_amount: amount, currency_id: "BRL" } }),
+  });
   await syncPreapproval(env, id);
 }
 
@@ -115,27 +157,31 @@ export async function webhook(request: Request, env: Env, ctx: ExecutionContext)
 
   if (env.MP_WEBHOOK_SECRET) {
     const valid = await validSignature(request, env.MP_WEBHOOK_SECRET, dataId);
-    if (!valid) log("app", "webhook_signature_mismatch", { level: "warn", type });
+    if (!valid) systemEvent(env, ctx, "warn", "webhook_signature_mismatch", type);
   }
 
   ctx.waitUntil(
     (async () => {
       try {
         if (type.includes("authorized_payment")) {
-          const pay = await mp<{ preapproval_id?: string }>(env, `/authorized_payments/${encodeURIComponent(dataId)}`);
-          if (pay.preapproval_id) await syncPreapproval(env, pay.preapproval_id);
+          const ap = await mp<AuthorizedPayment>(env, `/authorized_payments/${encodeURIComponent(dataId)}`);
+          if (ap.preapproval_id) {
+            await syncPreapproval(env, ap.preapproval_id);
+            await storePayment(env, ap);
+          }
         } else if (type.includes("preapproval")) {
           await syncPreapproval(env, dataId);
         }
       } catch (err) {
         log("app", "webhook_sync_failed", { level: "error", type, message: String(err).slice(0, 200) });
+        await systemEvent(env, null, "error", "webhook_sync_failed", `${type}: ${String(err).slice(0, 200)}`);
       }
     })(),
   );
   return new Response("ok");
 }
 
-/** GET /api/billing/sync — ao voltar do checkout, confere as assinaturas pendentes do usuário. */
+/** GET /api/billing/sync — ao voltar do checkout, confere as assinaturas do usuário. */
 export async function syncMine(env: Env, user: User): Promise<Response> {
   if (!env.MP_ACCESS_TOKEN) return json({ ok: false });
   const { results } = await env.DB.prepare(
@@ -143,7 +189,7 @@ export async function syncMine(env: Env, user: User): Promise<Response> {
   )
     .bind(user.id)
     .all<{ id: string }>();
-  for (const r of results) await syncPreapproval(env, r.id).catch(() => {});
+  for (const r of results) await syncPreapproval(env, r.id, true).catch(() => {});
   return json({ ok: true });
 }
 

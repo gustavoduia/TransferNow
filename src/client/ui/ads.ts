@@ -59,6 +59,16 @@ const COPY: Record<"send" | "receive", Copy> = {
   },
 };
 
+/** Métricas do vídeo para o painel (sem dados pessoais). */
+function report(moment: "send" | "receive", outcome: "shown" | "granted" | "unavailable" | "aborted" | "closed_early") {
+  void fetch("/api/ads/event", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ moment, outcome }),
+    keepalive: true,
+  }).catch(() => {});
+}
+
 export function showRewarded(unit: string | null, kind: "send" | "receive", onPlans: () => void): Promise<Outcome> {
   if (!unit) return Promise.resolve("skipped");
   const dlg = document.querySelector<HTMLDialogElement>("#dlg-ad")!;
@@ -88,6 +98,7 @@ export function showRewarded(unit: string | null, kind: "send" | "receive", onPl
     const finish = (outcome: Outcome, message?: string) => {
       if (finished) return;
       finished = true;
+      if (outcome === "granted" || outcome === "unavailable") report(kind, outcome);
       window.clearTimeout(timer);
       const g = window.googletag;
       if (g?.pubads && slot) {
@@ -144,6 +155,7 @@ export function showRewarded(unit: string | null, kind: "send" | "receive", onPl
           if (e.slot !== slot) return;
           if (granted) return finish("granted", copy.done);
           // fechou antes do fim: a recompensa só vale com o vídeo inteiro
+          report(kind, "closed_early");
           try {
             g.destroySlots([slot]);
           } catch {
@@ -165,12 +177,14 @@ export function showRewarded(unit: string | null, kind: "send" | "receive", onPl
     watch.onclick = () => {
       if (!ready) return;
       dlg.dataset.phase = "watching";
+      report(kind, "shown");
       dlg.close(); // o anúncio do Google ocupa a tela
       ready.makeRewardedVisible();
     };
     plans.onclick = () => {
       finished = true;
       window.clearTimeout(timer);
+      report(kind, "aborted");
       dlg.close();
       onPlans();
       resolve("aborted");

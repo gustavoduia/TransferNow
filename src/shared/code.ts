@@ -19,7 +19,7 @@ export function isValidCode(code: string): boolean {
 /** Mensagens trocadas entre navegador e sala (WebSocket de sinalização). */
 export type ClientToRoom =
   | { type: "signal"; data: unknown }
-  | { type: "event"; name: AuditEventName; bytes?: number; files?: number; durationMs?: number; relay?: boolean; reason?: string }
+  | { type: "event"; name: AuditEventName; ref?: string; bytes?: number; files?: number; durationMs?: number; relay?: boolean; reason?: string }
   | { type: "ping" };
 
 export type RoomToClient =

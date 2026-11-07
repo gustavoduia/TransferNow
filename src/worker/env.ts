@@ -29,6 +29,9 @@ export interface Env {
   PRICE_SCALE?: string;
   PRICE_PRO?: string;
 
-  /** Caminho do bloco rewarded no Google Ad Manager, ex.: /1234567/transfernow_rewarded */
+  /** Caminho do bloco rewarded no Google Ad Manager (padrão; o painel pode trocar) */
   ADS_REWARDED_UNIT?: string;
+
+  /** E-mails com acesso total ao painel, separados por vírgula */
+  ADMIN_EMAILS?: string;
 }

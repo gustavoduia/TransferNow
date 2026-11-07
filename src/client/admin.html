@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>Painel · TransferNow</title>
+    <meta name="theme-color" content="#0C1233" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=Exo+2:ital,wght@1,800;1,900&display=swap" />
+  </head>
+  <body>
+    <div class="shell" id="shell" hidden>
+      <aside class="side">
+        <a class="side__logo" href="/">TransferNow</a>
+        <span class="side__tag">Painel</span>
+        <nav class="side__nav" aria-label="Seções do painel">
+          <a href="#/visao" data-nav="visao">Visão geral</a>
+          <a href="#/usuarios" data-nav="usuarios">Usuários</a>
+          <a href="#/financeiro" data-nav="financeiro">Financeiro</a>
+          <a href="#/planos" data-nav="planos">Planos</a>
+          <a href="#/anuncios" data-nav="anuncios">Anúncios</a>
+          <a href="#/retencao" data-nav="retencao">Retenção</a>
+          <a href="#/suporte" data-nav="suporte">Suporte</a>
+          <a href="#/sistema" data-nav="sistema">Sistema</a>
+        </nav>
+        <div class="side__me">
+          <span id="me-email"></span>
+          <button class="btn btn--ghost btn--sm" id="btn-logout" type="button">Sair</button>
+        </div>
+      </aside>
+      <main class="main" id="main" tabindex="-1"></main>
+    </div>
+
+    <section class="gate" id="gate" hidden>
+      <div class="gate__card">
+        <h1>Painel do TransferNow</h1>
+        <p id="gate-msg">Entre com uma conta de administrador.</p>
+        <form id="gate-form" class="stack">
+          <label for="gate-email">E-mail</label>
+          <input id="gate-email" type="email" autocomplete="email" required />
+          <button class="btn btn--primary" type="submit">Enviar link de acesso</button>
+          <p class="field-error" id="gate-error" role="alert"></p>
+        </form>
+        <a class="btn" href="/api/auth/google" id="gate-google">Entrar com Google</a>
+      </div>
+    </section>
+
+    <dialog class="modal" id="modal">
+      <form method="dialog" class="stack" id="modal-form">
+        <h2 id="modal-title"></h2>
+        <p id="modal-msg"></p>
+        <div id="modal-fields" class="stack"></div>
+        <div class="row row--end">
+          <button class="btn btn--ghost" value="cancel" type="submit" formnovalidate>Cancelar</button>
+          <button class="btn btn--primary" value="ok" type="submit" id="modal-ok">Confirmar</button>
+        </div>
+      </form>
+    </dialog>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <script type="module" src="./admin/admin.ts"></script>
+  </body>
+</html>

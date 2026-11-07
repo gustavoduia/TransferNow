@@ -1,11 +1,12 @@
 import { isValidCode } from "../shared/code";
-import { PLANS, type PlanId } from "../shared/plans";
+import type { PlanId } from "../shared/plans";
 import { logAccess } from "./accesslog";
 import type { User } from "./auth";
 import { cloudCodeInUse, p2pCodeInUse, randomCode } from "./codes";
 import type { Env } from "./env";
 import { error, json, readJson } from "./http";
 import { log } from "./log";
+import { getPlans } from "./platform";
 import { activePlan, reserve } from "./quota";
 
 const UPLOAD_WINDOW_MS = 48 * 60 * 60 * 1000;
@@ -46,7 +47,7 @@ export const MAX_CLOUD_FILE = MAX_PART * MAX_PARTS;
 
 /** POST /api/cloud — cria a transferência e reserva a cota. */
 export async function createCloud(request: Request, env: Env, ctx: ExecutionContext, user: User, plan: PlanId): Promise<Response> {
-  const limits = PLANS[plan];
+  const limits = (await getPlans(env))[plan];
   if (limits.cloudHours <= 0) return error("plan_required", "O modo nuvem faz parte dos planos pagos.", 402);
 
   const body = await readJson<{ files?: { name?: string; size?: number; type?: string }[] }>(request);
@@ -58,7 +59,8 @@ export async function createCloud(request: Request, env: Env, ctx: ExecutionCont
   if (files.length === 0) return error("bad_request", "Nenhum arquivo informado.");
   if (files.some((f) => f.size > MAX_CLOUD_FILE)) return error("file_too_large", "Arquivos acima de 790 GB só podem ir pelo modo direto.");
 
-  const quota = await reserve(request, env, user, plan, files.map((f) => f.size));
+  const id = crypto.randomUUID();
+  const quota = await reserve(request, env, user, plan, files.map((f) => f.size), "cloud", id);
   if (!quota.ok) return error(quota.denial.code, quota.denial.message, 403);
 
   let code = "";
@@ -68,7 +70,6 @@ export async function createCloud(request: Request, env: Env, ctx: ExecutionCont
   }
   if (!code) return error("try_again", "Não foi possível gerar um código agora. Tente de novo.", 503);
 
-  const id = crypto.randomUUID();
   const now = Date.now();
   const total = files.reduce((s, f) => s + f.size, 0);
   await env.DB.batch([
@@ -106,7 +107,7 @@ export async function uploadRoute(request: Request, env: Env, user: User, id: st
 
   if (request.method === "DELETE" && rest === "") {
     await purge(env, t.id);
-    await env.DB.prepare("UPDATE cloud_transfers SET status = 'cancelled', completed_at = ? WHERE id = ?").bind(Date.now(), t.id).run();
+    await setStatus(env, t.id, "cancelled");
     return json({ ok: true });
   }
   if (t.status !== "uploading") return error("bad_state", "Esta transferência não está mais recebendo arquivos.", 409);
@@ -115,9 +116,12 @@ export async function uploadRoute(request: Request, env: Env, user: User, id: st
     const pending = await env.DB.prepare("SELECT COUNT(*) AS n FROM cloud_files WHERE transfer_id = ? AND uploaded = 0").bind(t.id).first<{ n: number }>();
     if ((pending?.n ?? 1) > 0) return error("incomplete", "Ainda há arquivos subindo.", 409);
     const plan = await activePlan(env, user.id);
-    const hours = Math.max(PLANS[plan].cloudHours, 24);
+    const hours = Math.max((await getPlans(env))[plan].cloudHours, 24);
     const expiresAt = Date.now() + hours * 3600_000;
-    await env.DB.prepare("UPDATE cloud_transfers SET status = 'ready', expires_at = ? WHERE id = ?").bind(expiresAt, t.id).run();
+    await env.DB.batch([
+      env.DB.prepare("UPDATE cloud_transfers SET status = 'ready', expires_at = ? WHERE id = ?").bind(expiresAt, t.id),
+      env.DB.prepare("UPDATE transfers SET status = 'ready' WHERE id = ?").bind(t.id),
+    ]);
     log("audit", "cloud_ready", { transfer: t.id.slice(0, 8), hours });
     return json({ ok: true, code: t.code, expiresAt });
   }
@@ -244,7 +248,7 @@ async function markDownloaded(env: Env, t: TransferRow, f: FileRow): Promise<voi
     .bind(t.id)
     .first<{ n: number }>();
   if ((left?.n ?? 1) === 0) {
-    await env.DB.prepare("UPDATE cloud_transfers SET status = 'done', completed_at = ? WHERE id = ?").bind(now, t.id).run();
+    await setStatus(env, t.id, "done");
     log("audit", "cloud_done", { transfer: t.id.slice(0, 8), bytes: t.total_bytes, waitMs: now - t.created_at });
   }
 }
@@ -282,10 +286,19 @@ export async function expireTransfers(env: Env): Promise<number> {
     .all<{ id: string }>();
   for (const t of results) {
     await purge(env, t.id);
-    await env.DB.prepare("UPDATE cloud_transfers SET status = 'expired', completed_at = ? WHERE id = ?").bind(Date.now(), t.id).run();
+    await setStatus(env, t.id, "expired");
   }
   if (results.length) log("audit", "cloud_expired", { count: results.length });
   return results.length;
+}
+
+/** Atualiza o estado na tabela da nuvem e na de transferências (BI). */
+export async function setStatus(env: Env, id: string, status: "done" | "expired" | "cancelled" | "removed"): Promise<void> {
+  const now = Date.now();
+  await env.DB.batch([
+    env.DB.prepare("UPDATE cloud_transfers SET status = ?, completed_at = ? WHERE id = ?").bind(status, now, id),
+    env.DB.prepare("UPDATE transfers SET status = ?, completed_at = ? WHERE id = ?").bind(status, now, id),
+  ]);
 }
 
 function contentDisposition(name: string): string {

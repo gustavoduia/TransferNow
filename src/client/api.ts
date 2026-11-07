@@ -4,13 +4,13 @@ export interface PublicConfig {
   roomTtlSeconds: number;
   plans: Record<PlanId, Plan>;
   prices: Record<Exclude<PlanId, "free">, number | null>;
-  ads: { rewardedUnit: string | null };
+  ads: { rewardedUnit: string | null; onReceive: boolean; everyN: number };
   login: { email: boolean; google: boolean };
   billing: boolean;
 }
 
 export interface Me {
-  user: { email: string; name: string | null } | null;
+  user: { email: string; name: string | null; admin: boolean } | null;
   plan: PlanId;
   usage: UsageView;
   subscription: { plan: PlanId; status: string; amount: number | null; next_payment_date: number | null } | null;
@@ -49,7 +49,7 @@ const fallbackConfig: PublicConfig = {
   roomTtlSeconds: 600,
   plans: {} as PublicConfig["plans"],
   prices: { starter: null, scale: null, pro: null },
-  ads: { rewardedUnit: null },
+  ads: { rewardedUnit: null, onReceive: false, everyN: 1 },
   login: { email: false, google: false },
   billing: false,
 };

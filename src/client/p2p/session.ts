@@ -16,7 +16,7 @@ abstract class BaseSession {
   protected peer: PeerLink | null = null;
   protected closed = false;
 
-  protected audit(name: AuditEventName, fields: { bytes?: number; files?: number; durationMs?: number; relay?: boolean; reason?: string }) {
+  protected audit(name: AuditEventName, fields: { ref?: string; bytes?: number; files?: number; durationMs?: number; relay?: boolean; reason?: string }) {
     this.signaling?.send({ type: "event", name, ...fields });
   }
 
@@ -67,24 +67,24 @@ export class SenderSession extends BaseSession {
     return this.dc?.readyState === "open" && !this.busy;
   }
 
-  async send(files: File[], onProgress: (p: Progress) => void): Promise<"done" | "declined" | "too_large"> {
+  async send(files: File[], onProgress: (p: Progress) => void, ref?: string): Promise<"done" | "declined" | "too_large"> {
     if (!this.dc || this.busy) throw new SessionError("not_ready", "A outra ponta ainda não está pronta.");
     this.busy = true;
     const started = performance.now();
     const bytes = files.reduce((s, f) => s + f.size, 0);
     const relay = (await this.peer?.usesRelay()) ?? false;
-    this.audit("transfer_start", { bytes, files: files.length, relay });
+    this.audit("transfer_start", { ref, bytes, files: files.length, relay });
     try {
       const maxMsg = this.peer?.pc.sctp?.maxMessageSize;
       await sendFiles(this.dc, files, onProgress, maxMsg || undefined);
-      this.audit("transfer_done", { bytes, files: files.length, durationMs: performance.now() - started, relay });
+      this.audit("transfer_done", { ref, bytes, files: files.length, durationMs: performance.now() - started, relay });
       return "done";
     } catch (err) {
       if (err instanceof TransferRejected && (err.reason === "declined" || err.reason === "too_large")) {
-        this.audit("transfer_rejected", { files: files.length, reason: err.reason });
+        this.audit("transfer_rejected", { ref, files: files.length, reason: err.reason });
         return err.reason;
       }
-      this.audit("transfer_error", { bytes, files: files.length, reason: String((err as Error).message) });
+      this.audit("transfer_error", { ref, bytes, files: files.length, reason: String((err as Error).message) });
       throw err;
     } finally {
       this.busy = false;

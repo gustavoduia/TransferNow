@@ -64,6 +64,21 @@ Os limites ficam em `src/shared/plans.ts`. O gratuito conta por aparelho (cookie
 
 **Anúncio:** bloco *rewarded* do Google Ad Manager (GPT). A pessoa escolhe assistir, e o envio ou download é liberado quando o Google confirma a recompensa. Sem anúncio disponível, a transferência segue sem vídeo. Quem recebe só vê anúncio quando as duas pontas são do gratuito.
 
+## Painel de administração (`/admin`)
+
+Acesso para os e-mails em `ADMIN_EMAILS` (no `wrangler.jsonc`) e para contas promovidas a administrador no próprio painel. O login é o mesmo do site (link por e-mail ou Google).
+
+| Seção | O que faz |
+|---|---|
+| Visão geral | BI: volume (GB/TB), transferências por dia (direto x nuvem), receita, MRR, novas contas, sucesso do P2P, uso do retransmissor, países, gratuito x pago. Períodos de 7, 30, 90 dias e 12 meses, com comparação ao período anterior. |
+| Usuários | Busca e filtros; ficha com plano, uso, assinaturas, cobranças, transferências e anotações. Ações: cortesia de plano por N dias, zerar uso, sincronizar e cancelar cobrança, encerrar sessões, bloquear, banir (bloqueia também o e-mail), promover a admin e excluir conta (LGPD). |
+| Financeiro | MRR, ticket médio, receita do mês e por mês, cancelamento, checkout abandonado, cobranças recusadas; assinaturas ativas, cancelando, expiradas e pendentes; transações. Tudo exporta em CSV. Botão de sincronizar com o Mercado Pago. |
+| Planos | Edita nome, preço, limites, prazo da nuvem, anúncios e se está à venda. Opção de levar o novo preço às assinaturas ativas. |
+| Anúncios | Liga/desliga, bloco do Ad Manager, em que momento mostrar, frequência (a cada N transferências), eCPM para estimar receita; métricas de exibição, conclusão, preenchimento e desistência. |
+| Retenção | Públicos (expirados, cancelando, checkout abandonado, gratuitos perto do limite, nunca assinaram, assinantes) com CSV e campanhas por e-mail com link de descadastro. |
+| Suporte | Busca por código (e remoção de arquivos da nuvem por denúncia), bloqueio de IP/aparelho/e-mail e consulta aos registros de acesso do Marco Civil (exige motivo). |
+| Sistema | Checklist de configuração, limpeza automática, erros recentes e a auditoria de tudo o que os administradores fizeram. |
+
 ## Deploy
 
 O deploy é feito pelo **Workers Builds** da Cloudflare: cada push na `main` roda `npm run build` e `npm run deploy:ci` (migrações do D1 + `wrangler deploy`).

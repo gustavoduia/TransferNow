@@ -144,6 +144,15 @@ export class PortalRoom extends DurableObject<Env> {
         relay: msg.relay === true,
         reason: typeof msg.reason === "string" ? msg.reason.slice(0, 80) : undefined,
       });
+      // Resultado da transferência para o BI. Só quem envia informa, e só para a reserva dele.
+      const ref = typeof msg.ref === "string" && /^[0-9a-f-]{36}$/.test(msg.ref) ? msg.ref : null;
+      const status = { transfer_done: "done", transfer_error: "failed", transfer_rejected: "rejected" }[msg.name as string];
+      if (ref && status && me.role === "sender") {
+        await this.env.DB.prepare("UPDATE transfers SET status = ?, relay = ?, completed_at = ? WHERE id = ? AND kind = 'p2p' AND status = 'started'")
+          .bind(status, msg.relay === true ? 1 : 0, Date.now(), ref)
+          .run()
+          .catch(() => {});
+      }
     }
   }
 

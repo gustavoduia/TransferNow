@@ -1,14 +1,15 @@
 import { isValidCode } from "../shared/code";
-import { PLANS } from "../shared/plans";
 import { ACCESS_LOG_RETENTION_MS, logAccess } from "./accesslog";
-import { currentUser, googleCallback, googleStart, logout, requestEmailLink, verifyEmailLink, type User } from "./auth";
-import { cancel, checkout, prices, subscriptionView, syncMine, webhook } from "./billing";
+import { adEvent, adminRoute, unsubscribe } from "./admin";
+import { currentUser, googleCallback, googleStart, isAdmin, logout, requestEmailLink, verifyEmailLink, type User } from "./auth";
+import { cancel, checkout, subscriptionView, syncMine, webhook } from "./billing";
 import { createCloud, describeByCode, downloadByCode, expireTransfers, isCloudCode, listMine, uploadRoute } from "./cloud";
 import { cloudCodeInUse, randomCode } from "./codes";
 import type { Env } from "./env";
 import { clientIp, error, json, readJson, sameOrigin } from "./http";
 import { log, shortHash } from "./log";
-import { activePlan, reserve, usageView } from "./quota";
+import { getAds, getPlans, putSetting, systemEvent } from "./platform";
+import { activePlan, bannedVisitor, reserve, usageView } from "./quota";
 
 export { PortalRoom } from "./room";
 
@@ -30,10 +31,15 @@ export default {
 
       // Webhook do Mercado Pago vem de fora; todo o resto que escreve precisa vir do próprio site.
       if (path === "/api/billing/webhook" && method === "POST") return await webhook(request, env, ctx);
+      if (path === "/api/unsubscribe") return await unsubscribe(request, env);
       if (method !== "GET" && method !== "HEAD" && !sameOrigin(request)) return error("forbidden", "Origem não permitida.", 403);
 
       if (path === "/api/health") return json({ ok: true });
-      if (path === "/api/config" && method === "GET") return config(env);
+      if (path === "/api/config" && method === "GET") return await config(env);
+      if (path === "/api/ads/event" && method === "POST") {
+        if (!(await allow(env.JOIN_LIMITER, request))) return json({ ok: false }, 429);
+        return await adEvent(request, env);
+      }
       if (path === "/api/ice" && method === "GET") return await iceServers(env);
 
       // ── contas ──
@@ -47,9 +53,19 @@ export default {
       if (path === "/api/auth/logout" && method === "POST") return await logout(request, env);
 
       const user = await currentUser(request, env);
-      if (user && path === "/api/me") logAccess(env, ctx, request, "session", user.id);
+      if (user && path === "/api/me") {
+        logAccess(env, ctx, request, "session", user.id);
+        const now = Date.now();
+        ctx.waitUntil(
+          env.DB.prepare("UPDATE users SET last_seen_at = ? WHERE id = ? AND (last_seen_at IS NULL OR last_seen_at < ?)").bind(now, user.id, now - 3600_000).run().catch(() => {}),
+        );
+      }
 
       if (path === "/api/me" && method === "GET") return await me(request, env, user);
+      if (path.startsWith("/api/admin/")) {
+        if (user) logAccess(env, ctx, request, "admin", user.id, path.slice(0, 80));
+        return await adminRoute(request, env, ctx, user);
+      }
 
       // ── P2P ──
       if (path === "/api/rooms" && method === "POST") return await createRoom(request, env, ctx, user);
@@ -85,19 +101,28 @@ export default {
       return error("not_found", "Rota não encontrada.", 404);
     } catch (err) {
       log("app", "unhandled_error", { level: "error", path, message: String(err).slice(0, 300) });
+      systemEvent(env, ctx, "error", "unhandled_error", `${method} ${path}: ${String(err).slice(0, 300)}`);
       return error("internal", "Algo deu errado do nosso lado. Tente de novo.", 500);
     }
   },
 
   /** De hora em hora: expira arquivos da nuvem e limpa registros vencidos. */
   async scheduled(_event: ScheduledController, env: Env): Promise<void> {
-    await expireTransfers(env);
-    const now = Date.now();
-    await env.DB.batch([
-      env.DB.prepare("DELETE FROM access_log WHERE ts < ?").bind(now - ACCESS_LOG_RETENTION_MS),
-      env.DB.prepare("DELETE FROM sessions WHERE expires_at < ?").bind(now),
-      env.DB.prepare("DELETE FROM login_tokens WHERE expires_at < ?").bind(now - 86400_000),
-    ]);
+    try {
+      const expired = await expireTransfers(env);
+      const now = Date.now();
+      await env.DB.batch([
+        env.DB.prepare("DELETE FROM access_log WHERE ts < ?").bind(now - ACCESS_LOG_RETENTION_MS),
+        env.DB.prepare("DELETE FROM sessions WHERE expires_at < ?").bind(now),
+        env.DB.prepare("DELETE FROM login_tokens WHERE expires_at < ?").bind(now - 86400_000),
+        env.DB.prepare("DELETE FROM system_events WHERE ts < ?").bind(now - 30 * 86400_000),
+        // P2P que nunca terminou (aba fechada no meio) vira "abandonada" depois de 12h.
+        env.DB.prepare("UPDATE transfers SET status = 'abandoned' WHERE kind = 'p2p' AND status = 'started' AND ts < ?").bind(now - 12 * 3600_000),
+      ]);
+      await putSetting(env, "cron_last", { ts: now, expired });
+    } catch (err) {
+      await systemEvent(env, null, "error", "cron_failed", String(err).slice(0, 300));
+    }
   },
 } satisfies ExportedHandler<Env>;
 
@@ -106,13 +131,18 @@ async function allow(limiter: Env["JOIN_LIMITER"], request: Request): Promise<bo
   return (await limiter.limit({ key: clientIp(request) })).success;
 }
 
-function config(env: Env): Response {
+async function config(env: Env): Promise<Response> {
+  const [plans, ads] = await Promise.all([getPlans(env), getAds(env)]);
   return json(
     {
       roomTtlSeconds: ttl(env),
-      plans: PLANS,
-      prices: prices(env),
-      ads: { rewardedUnit: env.ADS_REWARDED_UNIT || null },
+      plans,
+      prices: { starter: plans.starter.price, scale: plans.scale.price, pro: plans.pro.price },
+      ads: {
+        rewardedUnit: ads.enabled ? ads.rewardedUnit : null,
+        onReceive: ads.enabled && ads.onReceive,
+        everyN: ads.everyN,
+      },
       login: { email: !!env.EMAIL, google: !!env.GOOGLE_CLIENT_ID },
       billing: !!env.MP_ACCESS_TOKEN,
     },
@@ -126,7 +156,7 @@ async function me(request: Request, env: Env, user: User | null): Promise<Respon
   const { view, setCookie } = await usageView(request, env, user, plan);
   const subscription = user ? await subscriptionView(env, user) : null;
   return json(
-    { user: user ? { email: user.email, name: user.name } : null, plan, usage: view, subscription },
+    { user: user ? { email: user.email, name: user.name, admin: isAdmin(user, env) } : null, plan, usage: view, subscription },
     200,
     setCookie ? { "Set-Cookie": setCookie } : {},
   );
@@ -137,10 +167,10 @@ async function reserveP2P(request: Request, env: Env, user: User | null): Promis
   const sizes = (body?.sizes ?? []).slice(0, 2000).map((n) => Math.max(0, Math.floor(Number(n) || 0)));
   if (sizes.length === 0) return error("bad_request", "Nenhum arquivo informado.");
   const plan = await activePlan(env, user?.id);
-  const r = await reserve(request, env, user, plan, sizes);
+  const r = await reserve(request, env, user, plan, sizes, "p2p");
   const headers: Record<string, string> = r.setCookie ? { "Set-Cookie": r.setCookie } : {};
   if (!r.ok) return json({ ok: false, ...r.denial, plan }, 403, headers);
-  return json({ ok: true, plan, ads: PLANS[plan].ads }, 200, headers);
+  return json({ ok: true, plan, ads: r.ads, transferId: r.transferId }, 200, headers);
 }
 
 async function iceServers(env: Env): Promise<Response> {
@@ -171,6 +201,7 @@ async function createRoom(request: Request, env: Env, ctx: ExecutionContext, use
     log("audit", "rate_limited", { action: "create", ip: ipHash });
     return error("rate_limited", "Muitos portais abertos em pouco tempo. Aguarde um minuto.", 429);
   }
+  if (!user && (await bannedVisitor(request, env))) return error("banned", "O acesso deste aparelho ou rede ao TransferNow foi bloqueado.", 403);
   const plan = await activePlan(env, user?.id);
 
   for (let attempt = 0; attempt < 5; attempt++) {
@@ -204,6 +235,7 @@ async function connectRoom(request: Request, env: Env, ctx: ExecutionContext, ra
     log("audit", "rate_limited", { action: "join", ip: ipHash });
     return error("rate_limited", "Muitas tentativas seguidas. Aguarde um minuto.", 429);
   }
+  if (!user && (await bannedVisitor(request, env))) return error("banned", "O acesso deste aparelho ou rede ao TransferNow foi bloqueado.", 403);
   logAccess(env, ctx, request, role === "receiver" ? "room_join" : "room_open", user?.id, await shortHash(code, env.LOG_SALT ?? "transfernow"));
 
   const stub = env.ROOMS.get(env.ROOMS.idFromName(code));

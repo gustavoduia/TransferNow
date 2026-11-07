@@ -58,7 +58,7 @@ function renderPlans() {
       card.dataset.plan = id;
       if (id === current) card.classList.add("is-current");
 
-      const price = id === "free" ? "Grátis" : config.prices[id] ? `${money.format(config.prices[id]!)}/mês` : "Em breve";
+      const price = id === "free" ? "Grátis" : p.price && p.forSale ? `${money.format(p.price)}/mês` : "Em breve";
       const features = [
         id === "free" ? "5 GB por mês" : p.monthlyGb < 0 ? "Volume ilimitado" : `${p.monthlyGb} GB por mês`,
         limitText(p.monthlyTransfers, "transferências por mês").replace("Ilimitado", "Transferências ilimitadas"),
@@ -83,7 +83,7 @@ function renderPlans() {
         const btn = document.createElement("button");
         btn.type = "button";
         btn.className = "switch switch--primary switch--small";
-        const available = config.billing && !!config.prices[id];
+        const available = config.billing && !!p.price && p.forSale;
         btn.disabled = !available;
         btn.innerHTML = `<span class="led" aria-hidden="true"></span>`;
         btn.append(available ? `Assinar ${p.name}` : "Em breve");
@@ -190,6 +190,7 @@ export function openAccount() {
   meter($("#acc-bytes"), me.usage.bytes, p.monthlyGb < 0 ? -1 : p.monthlyGb * GB, formatBytes);
   meter($("#acc-transfers"), me.usage.transfers, p.monthlyTransfers, (n) => `${n}`);
   $("#acc-cancel").hidden = !(sub && sub.status === "authorized");
+  $("#acc-admin").hidden = !me.user.admin;
   $<HTMLDialogElement>("#dlg-account").showModal();
 }
 
@@ -233,8 +234,9 @@ export async function initAccount(cfg: PublicConfig) {
 
   const params = new URLSearchParams(location.search);
   const login = params.get("login");
+  const wantsPlans = params.get("planos") === "1";
   const billingReturn = params.get("assinatura") === "retorno";
-  if (login || billingReturn) history.replaceState(null, "", location.pathname + location.hash);
+  if (login || billingReturn || wantsPlans || params.has("utm_campaign")) history.replaceState(null, "", location.pathname + location.hash);
 
   if (billingReturn) await api("/api/billing/sync").catch(() => {});
   await refreshMe();
@@ -244,11 +246,14 @@ export async function initAccount(cfg: PublicConfig) {
     const wanted = sessionStorage.getItem(WANTED_PLAN) as PlanId | null;
     sessionStorage.removeItem(WANTED_PLAN);
     if (wanted && PAID_PLANS.includes(wanted)) openPlans();
+  } else if (login === "bloqueado") {
+    toast("Esta conta está bloqueada. Fale com contato@duia.com.br.");
   } else if (login === "expirado") {
     openLogin("Esse link expirou ou já foi usado. Peça um novo.");
   } else if (login === "falhou" || login === "google-indisponivel") {
     openLogin("Não foi possível entrar com o Google agora. Tente pelo e-mail.");
   }
+  if (wantsPlans) openPlans();
   if (billingReturn) {
     toast(me && me.plan !== "free" ? `Plano ${config.plans[me.plan].name} ativo. Bons teletransportes.` : "Pagamento em análise. O plano ativa assim que o Mercado Pago confirmar.");
   }
