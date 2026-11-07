@@ -10,6 +10,7 @@ interface Meta {
   createdAt: number;
   expiresAt: number;
   roomHash: string;
+  senderPaid: boolean;
   pairedAt?: number;
 }
 
@@ -38,14 +39,19 @@ export class PortalRoom extends DurableObject<Env> {
     const url = new URL(request.url);
 
     if (url.pathname === "/init" && request.method === "POST") {
-      const { ttlSeconds, roomHash } = (await request.json()) as { ttlSeconds: number; roomHash: string };
+      const { ttlSeconds, roomHash, senderPaid } = (await request.json()) as { ttlSeconds: number; roomHash: string; senderPaid?: boolean };
       const existing = await this.ctx.storage.get<Meta>("meta");
       if (existing && existing.expiresAt > Date.now()) return new Response("taken", { status: 409 });
       const now = Date.now();
-      const meta: Meta = { status: "waiting", createdAt: now, expiresAt: now + ttlSeconds * 1000, roomHash };
+      const meta: Meta = { status: "waiting", createdAt: now, expiresAt: now + ttlSeconds * 1000, roomHash, senderPaid: !!senderPaid };
       await this.ctx.storage.put("meta", meta);
       await this.ctx.storage.setAlarm(meta.expiresAt);
       return Response.json({ expiresAt: meta.expiresAt }, { status: 201 });
+    }
+
+    if (url.pathname === "/status") {
+      const meta = await this.ctx.storage.get<Meta>("meta");
+      return Response.json({ active: !!meta && (meta.status === "paired" || meta.expiresAt > Date.now()) });
     }
 
     if (url.pathname === "/ws") {
@@ -93,7 +99,7 @@ export class PortalRoom extends DurableObject<Env> {
     await this.ctx.storage.put("meta", meta);
     await this.ctx.storage.setAlarm(meta.pairedAt + PAIRED_MAX_MS);
 
-    this.send(server, { type: "hello", role, expiresAt: meta.expiresAt });
+    this.send(server, { type: "hello", role, expiresAt: meta.expiresAt, senderPaid: meta.senderPaid });
     this.send(server, { type: "peer-joined" });
     for (const ws of senders) this.send(ws, { type: "peer-joined" });
     log("audit", "portal_paired", {

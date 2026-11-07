@@ -1,7 +1,7 @@
 import type { ClientToRoom, Role, RoomToClient } from "../../shared/code";
 
 export interface SignalingHandlers {
-  onHello?(expiresAt: number): void;
+  onHello?(expiresAt: number, senderPaid?: boolean): void;
   onPeerJoined?(): void;
   onPeerLeft?(): void;
   onSignal?(data: unknown): void;
@@ -42,7 +42,7 @@ export class Signaling {
     }
     switch (msg.type) {
       case "hello":
-        return this.handlers.onHello?.(msg.expiresAt);
+        return this.handlers.onHello?.(msg.expiresAt, msg.senderPaid);
       case "peer-joined":
         return this.handlers.onPeerJoined?.();
       case "peer-left":

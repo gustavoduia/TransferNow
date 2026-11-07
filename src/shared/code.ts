@@ -23,7 +23,7 @@ export type ClientToRoom =
   | { type: "ping" };
 
 export type RoomToClient =
-  | { type: "hello"; role: Role; expiresAt: number }
+  | { type: "hello"; role: Role; expiresAt: number; senderPaid?: boolean }
   | { type: "peer-joined" }
   | { type: "peer-left" }
   | { type: "signal"; data: unknown }

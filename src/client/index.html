@@ -26,6 +26,11 @@
       <p class="tagline">De um navegador para o outro, direto. Nada fica guardado no caminho.</p>
     </header>
 
+    <nav class="topbar" aria-label="Conta">
+      <button class="link-btn" id="btn-plans" type="button">Planos</button>
+      <button class="chip chip--account" id="btn-account" type="button">Entrar</button>
+    </nav>
+
     <main class="console" aria-live="polite">
       <!-- portal desligado -->
       <section class="panel" data-for="idle">
@@ -44,21 +49,36 @@
             <span class="led led--flux" aria-hidden="true"></span>Receber teletransporte
           </button>
         </div>
+        <button class="link-btn link-btn--cloud" id="btn-cloud" type="button">
+          A outra pessoa não está online? Deixe o arquivo na nuvem
+        </button>
+      </section>
+
+      <!-- nuvem (assinantes): escolher arquivos -->
+      <section class="panel" data-for="cloud-pick">
+        <p class="status" id="cloud-status"></p>
+        <div class="drop-actions">
+          <label class="switch switch--primary" for="cloud-input">
+            <span class="led led--amber" aria-hidden="true"></span>Escolher arquivos
+          </label>
+          <input id="cloud-input" type="file" multiple hidden />
+          <span class="hint">ou arraste para dentro do portal</span>
+        </div>
       </section>
 
       <!-- quem envia: código no display dos circuitos do tempo -->
-      <section class="panel panel--circuits" data-for="send-waiting send-ready send-transfer send-done">
-        <div class="circuit" data-hide-in="send-transfer">
+      <section class="panel panel--circuits" data-for="send-waiting send-ready send-transfer send-done cloud-upload cloud-ready">
+        <div class="circuit" data-hide-in="send-transfer cloud-upload">
           <span class="circuit__label" id="code-label">Código do portal</span>
           <div class="circuit__display" aria-labelledby="code-label">
             <span class="seg-ghost" aria-hidden="true">~~~~~~</span>
             <output class="seg-value" id="code-out"></output>
           </div>
-          <div class="circuit__meta" data-show-in="send-waiting">
-            <span>expira em</span>
+          <div class="circuit__meta" data-show-in="send-waiting cloud-ready">
+            <span id="countdown-label">expira em</span>
             <span class="seg7" id="countdown">10:00</span>
           </div>
-          <div class="circuit__actions" data-show-in="send-waiting">
+          <div class="circuit__actions" data-show-in="send-waiting cloud-ready">
             <button class="chip" id="btn-copy-code" type="button">Copiar código</button>
             <button class="chip" id="btn-copy-link" type="button">Copiar link</button>
           </div>
@@ -92,7 +112,7 @@
       </section>
 
       <!-- quem recebe: conectando / esperando / oferta -->
-      <section class="panel" data-for="recv-connecting recv-wait recv-done">
+      <section class="panel" data-for="recv-connecting recv-wait recv-done recv-download">
         <p class="status" id="recv-status"></p>
       </section>
 
@@ -108,7 +128,7 @@
       </section>
 
       <!-- transmissão nos dois lados -->
-      <section class="panel panel--transfer" data-for="send-transfer recv-transfer">
+      <section class="panel panel--transfer" data-for="send-transfer recv-transfer cloud-upload">
         <div class="gauge">
           <span class="gauge__file" id="transfer-file"></span>
           <span class="gauge__pct"><span class="seg7" id="transfer-pct">0</span><small>%</small></span>
@@ -134,29 +154,86 @@
     </main>
 
     <footer class="foot">
-      <button class="link-btn" id="btn-privacy" type="button">Privacidade</button>
-      <span>Conexão direta e criptografada entre os navegadores</span>
+      <a class="link-btn" href="/sobre.html">Sobre</a>
+      <a class="link-btn" href="/faq.html">Dúvidas</a>
+      <a class="link-btn" href="/termos.html">Termos</a>
+      <a class="link-btn" href="/privacidade.html">Privacidade</a>
     </footer>
 
     <div class="drop-veil" id="drop-veil" aria-hidden="true"><span>Solte para teletransportar</span></div>
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
-    <dialog class="privacy" id="privacy">
-      <h2>Privacidade</h2>
-      <p>
-        Os arquivos vão direto de um navegador para o outro, por uma conexão WebRTC criptografada.
-        O TransferNow não recebe nem guarda o conteúdo, nem os nomes dos arquivos.
-      </p>
-      <p>
-        Quando as redes não permitem a conexão direta, os dados passam por um retransmissor da Cloudflare,
-        ainda criptografados, sem serem armazenados.
-      </p>
-      <p>
-        Para segurança e auditoria registramos apenas eventos técnicos: portal aberto, conexão feita,
-        tamanho total e duração da transmissão. Endereços IP entram só como um código embaralhado (hash)
-        e os registros são apagados automaticamente.
-      </p>
-      <p>Não há cadastro, login, cookies de rastreamento nem anúncios.</p>
-      <form method="dialog"><button class="switch" type="submit">Entendi</button></form>
+    <!-- planos -->
+    <dialog class="sheet sheet--wide" id="dlg-plans" aria-labelledby="plans-title">
+      <form method="dialog" class="sheet__close"><button class="link-btn" aria-label="Fechar">Fechar</button></form>
+      <h2 id="plans-title">Planos</h2>
+      <p class="sheet__lead">O gratuito funciona sem cadastro. Assinando, você manda arquivos maiores, sem anúncios, e pode deixar o arquivo na nuvem para a outra pessoa baixar depois.</p>
+      <div class="plans" id="plans-grid"></div>
+      <p class="sheet__fine" id="plans-note"></p>
+    </dialog>
+
+    <!-- login -->
+    <dialog class="sheet" id="dlg-login" aria-labelledby="login-title">
+      <form method="dialog" class="sheet__close"><button class="link-btn" aria-label="Fechar">Fechar</button></form>
+      <h2 id="login-title">Entrar</h2>
+      <p class="sheet__lead" id="login-reason"></p>
+      <form id="login-form" class="login-form">
+        <label for="login-email">Seu e-mail</label>
+        <input id="login-email" type="email" autocomplete="email" required placeholder="voce@exemplo.com" />
+        <button class="switch switch--primary" id="login-submit" type="submit">
+          <span class="led" aria-hidden="true"></span>Enviar link de acesso
+        </button>
+        <p class="field-error" id="login-error" role="alert"></p>
+      </form>
+      <p class="login-divider" id="login-divider"><span>ou</span></p>
+      <a class="switch switch--google" id="login-google" href="/api/auth/google">
+        <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z"/><path fill="#FF3D00" d="m6.3 14.7 6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-8l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.4-.4-3.5z"/></svg>
+        Entrar com Google
+      </a>
+      <div class="login-sent" id="login-sent" hidden>
+        <p>Enviamos um link para <strong id="login-sent-to"></strong>.</p>
+        <p class="sheet__fine">Abra o e-mail neste aparelho e clique em “Entrar no TransferNow”. O link vale por 20 minutos.</p>
+      </div>
+      <p class="sheet__fine" id="login-none" hidden>O login ainda está sendo configurado. Volte em breve.</p>
+    </dialog>
+
+    <!-- conta -->
+    <dialog class="sheet" id="dlg-account" aria-labelledby="acc-title">
+      <form method="dialog" class="sheet__close"><button class="link-btn" aria-label="Fechar">Fechar</button></form>
+      <h2 id="acc-title">Minha conta</h2>
+      <p class="sheet__lead" id="acc-email"></p>
+      <div class="acc-plan">
+        <span class="acc-plan__label">Plano</span>
+        <strong id="acc-plan"></strong>
+        <span class="sheet__fine" id="acc-status"></span>
+      </div>
+      <div class="usage" id="acc-bytes">
+        <span class="usage__label">Volume este mês</span>
+        <div class="bar"><span class="bar__fill"></span></div>
+        <span class="usage__text"></span>
+      </div>
+      <div class="usage" id="acc-transfers">
+        <span class="usage__label">Transferências este mês</span>
+        <div class="bar"><span class="bar__fill"></span></div>
+        <span class="usage__text"></span>
+      </div>
+      <div class="switch-row switch-row--start">
+        <button class="switch switch--primary" id="acc-change" type="button"><span class="led" aria-hidden="true"></span>Mudar de plano</button>
+        <button class="switch" id="acc-logout" type="button">Sair</button>
+      </div>
+      <button class="link-btn" id="acc-cancel" type="button">Cancelar renovação</button>
+    </dialog>
+
+    <!-- vídeo recompensado (gratuito) -->
+    <dialog class="sheet sheet--ad" id="dlg-ad" aria-labelledby="ad-title" data-phase="loading">
+      <div class="ad-reel" aria-hidden="true"><span></span><span></span><span></span></div>
+      <h2 id="ad-title" data-ad="title"></h2>
+      <p class="sheet__lead" data-ad="body"></p>
+      <button class="switch switch--primary" type="button" data-ad="watch">
+        <span class="led" aria-hidden="true"></span><span>Carregando vídeo…</span>
+      </button>
+      <p class="ad-note" data-ad="note" role="status"></p>
+      <button class="link-btn" type="button" data-ad="plans">Assinar e não ver anúncios</button>
     </dialog>
 
     <script type="module" src="./main.ts"></script>

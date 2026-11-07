@@ -44,31 +44,56 @@ tests/e2e.mjs           dois navegadores trocando um arquivo de verdade
 npm install
 npm run dev            # build do site + wrangler dev em http://localhost:8787
 npm run typecheck
-BASE_URL=http://localhost:8787 npm run test:e2e   # precisa do Chrome instalado
+npx wrangler d1 migrations apply transfernow --local
+BASE_URL=http://localhost:8787 npm run test:e2e   # P2P; precisa do Chrome instalado
+SESSION=<cookie tn_sess de um assinante> npm run test:e2e:cloud
 ```
+
+## Planos
+
+| Plano | Volume/mês | Transferências/mês | Por arquivo | Nuvem | Anúncio |
+|---|---|---|---|---|---|
+| Gratuito (sem login) | 5 GB | 10 | 5 GB | — | vídeo recompensado no envio e no download |
+| Starter | 50 GB | 100 | 10 GB | 24 h | não |
+| Scale | 200 GB | 200 | 50 GB | 72 h | não |
+| Pró | ilimitado (uso justo 2 TB) | ilimitado | ilimitado | 7 dias | não |
+
+Os limites ficam em `src/shared/plans.ts`. O gratuito conta por aparelho (cookie `tn_dev`) e, com teto 10× maior, por IP. No P2P o tamanho é informado pelo navegador; na nuvem é medido no servidor.
+
+**Modo nuvem:** o arquivo sobe em partes (8–90 MB) direto para o R2 pelo Worker, sem chaves S3. Quem recebe baixa pelo código; cada arquivo é apagado quando o download termina, e uma rotina de hora em hora apaga o que venceu. A regra de ciclo de vida do bucket apaga qualquer objeto com mais de 8 dias como rede de segurança.
+
+**Anúncio:** bloco *rewarded* do Google Ad Manager (GPT). A pessoa escolhe assistir, e o envio ou download é liberado quando o Google confirma a recompensa. Sem anúncio disponível, a transferência segue sem vídeo. Quem recebe só vê anúncio quando as duas pontas são do gratuito.
 
 ## Deploy
 
-O deploy é feito pelo **Workers Builds** da Cloudflare: cada push na `main` roda `npm run build` e `npx wrangler deploy`.
+O deploy é feito pelo **Workers Builds** da Cloudflare: cada push na `main` roda `npm run build` e `npm run deploy:ci` (migrações do D1 + `wrangler deploy`).
 
 ### Configuração no painel (Workers → transfernow → Settings → Variables and Secrets)
 
 | Nome | Tipo | Para que serve |
 |---|---|---|
-| `MAX_FILE_SIZE_MB` | Variável | Tamanho máximo por arquivo, em MB. `-1` ou ausente = sem limite. `1024` = 1 GB. |
-| `LOG_SALT` | Segredo | Sal do hash de IP nos logs. Use um texto aleatório longo. |
-| `TURN_KEY_ID` | Segredo | ID da chave TURN (Realtime → TURN Server). Opcional. |
-| `TURN_KEY_API_TOKEN` | Segredo | Token da chave TURN. Opcional. |
+| `PRICE_STARTER`, `PRICE_SCALE`, `PRICE_PRO` | Variável | Preço mensal em reais (ex.: `19.90`). Sem preço, o plano aparece como "Em breve". |
+| `ADS_REWARDED_UNIT` | Variável | Bloco rewarded do Google Ad Manager (ex.: `/1234567/transfernow_rewarded`). Sem ele, o gratuito não mostra vídeo. |
+| `GOOGLE_CLIENT_ID` | Variável | Login com Google. |
+| `GOOGLE_CLIENT_SECRET` | Segredo | Login com Google. |
+| `MP_ACCESS_TOKEN` | Segredo | Credencial de produção do Mercado Pago. Sem ela, as assinaturas ficam fechadas. |
+| `MP_WEBHOOK_SECRET` | Segredo | Assinatura secreta dos webhooks do Mercado Pago. |
+| `MAX_FILE_SIZE_MB` | Variável | Limite extra por arquivo no gratuito, em MB. `-1` ou ausente = 5 GB do plano. |
+| `LOG_SALT` | Segredo | Sal do hash de IP nos logs. |
+| `TURN_KEY_ID`, `TURN_KEY_API_TOKEN` | Segredo | TURN da Cloudflare Realtime (opcional, recomendado). |
 
-O `wrangler.jsonc` usa `keep_vars: true`, então o que for configurado no painel não é apagado pelos próximos deploys.
+`keep_vars: true` impede que os deploys apaguem o que foi configurado no painel.
 
-O limite de tamanho é aplicado pelos dois navegadores: quem envia é avisado antes, e quem recebe recusa automaticamente. Como o arquivo nunca passa pelo servidor, não há como o servidor barrar o conteúdo em si.
+### Serviços externos
 
-### TURN (opcional, recomendado)
+1. **E-mail do link de acesso:** Cloudflare → Compute → Email Service → Email Sending → *Onboard Domain* → `duia.com.br`. Remetente: `transfernow@duia.com.br` (variável `EMAIL_FROM`).
+2. **Google:** Google Cloud Console → APIs e serviços → Credenciais → ID do cliente OAuth (aplicativo da Web). URI de redirecionamento: `https://transfernow.duia.com.br/api/auth/google/callback`.
+3. **Mercado Pago:** Suas integrações → criar aplicação → credenciais de produção (`MP_ACCESS_TOKEN`). Em Webhooks, URL `https://transfernow.duia.com.br/api/billing/webhook` com os eventos de **Planos e assinaturas**; copie a assinatura secreta para `MP_WEBHOOK_SECRET`. O webhook sempre reconsulta a assinatura na API antes de liberar um plano.
+4. **Anúncios:** conta no AdSense aprovada para `duia.com.br` → Google Ad Manager → bloco de anúncios do tipo *Rewarded* para web → desative a proteção "Block non-instream video ads" → coloque o caminho do bloco em `ADS_REWARDED_UNIT`.
 
-Sem TURN, cerca de 10–20% das conexões falham em redes restritivas (corporativas, 4G com NAT simétrico). O TURN da Cloudflare Realtime tem 1.000 GB/mês grátis e depois US$ 0,05/GB, cobrado só no tráfego que passa por ele. O STUN (`stun.cloudflare.com`) é grátis e ilimitado.
+### Registros de acesso (Marco Civil, art. 15)
 
-Para ativar: painel da Cloudflare → Realtime → TURN Server → criar chave → colocar `TURN_KEY_ID` e `TURN_KEY_API_TOKEN` como segredos do Worker.
+A tabela `access_log` guarda IP, data e hora dos usos por 6 meses (183 dias), apagados pela rotina agendada. O acesso deve ser restrito e os dados só saem por ordem judicial.
 
 ## Licenças
 

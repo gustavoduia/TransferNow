@@ -20,10 +20,25 @@
   },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["PortalRoom"] }],
 
+  // Contas, assinaturas, cotas, transferências na nuvem e registros de acesso.
+  "d1_databases": [
+    { "binding": "DB", "database_name": "transfernow", "database_id": "d01b6b01-536e-45f5-b9b3-086ffd49c0f8", "migrations_dir": "migrations" }
+  ],
+
+  // Arquivos guardados temporariamente (planos pagos). Regra de ciclo de vida apaga tudo após 8 dias.
+  "r2_buckets": [{ "binding": "CLOUD", "bucket_name": "transfernow-cloud" }],
+
+  // E-mail do link de acesso (Cloudflare Email Service).
+  "send_email": [{ "name": "EMAIL" }],
+
+  // De hora em hora: expira arquivos da nuvem e limpa registros vencidos.
+  "triggers": { "crons": ["17 * * * *"] },
+
   // Limites contra quem tenta adivinhar códigos ou criar salas em massa.
   "ratelimits": [
     { "name": "JOIN_LIMITER", "namespace_id": "1001", "simple": { "limit": 20, "period": 60 } },
-    { "name": "CREATE_LIMITER", "namespace_id": "1002", "simple": { "limit": 30, "period": 60 } }
+    { "name": "CREATE_LIMITER", "namespace_id": "1002", "simple": { "limit": 30, "period": 60 } },
+    { "name": "AUTH_LIMITER", "namespace_id": "1003", "simple": { "limit": 5, "period": 60 } }
   ],
 
   // Logs de aplicação e auditoria (Workers Logs).
@@ -34,12 +49,19 @@
   // Variáveis definidas no painel do Cloudflare não são apagadas a cada deploy.
   "keep_vars": true,
   "vars": {
-    "ROOM_TTL_SECONDS": "600"
+    "ROOM_TTL_SECONDS": "600",
+    "EMAIL_FROM": "transfernow@duia.com.br"
   }
   // Configure no painel (Workers → transfernow → Settings → Variables):
-  //   MAX_FILE_SIZE_MB    — tamanho máximo por arquivo em MB. -1 (ou ausente) = sem limite. 1024 = 1 GB.
+  //   MAX_FILE_SIZE_MB    — limite extra por arquivo no plano gratuito, em MB (-1 = só o limite do plano, 5 GB)
+  //   PRICE_STARTER, PRICE_SCALE, PRICE_PRO — preço mensal em reais (ex.: 19.90)
+  //   ADS_REWARDED_UNIT   — bloco rewarded do Google Ad Manager (ex.: /1234567/transfernow_rewarded)
+  //   GOOGLE_CLIENT_ID    — login com Google
   // Segredos opcionais (wrangler secret put):
   //   LOG_SALT            — sal para o hash de IP nos logs
   //   TURN_KEY_ID         — ID da chave TURN do Cloudflare Realtime
   //   TURN_KEY_API_TOKEN  — token da chave TURN
+  //   GOOGLE_CLIENT_SECRET — login com Google
+  //   MP_ACCESS_TOKEN     — Mercado Pago (credencial de produção)
+  //   MP_WEBHOOK_SECRET   — assinatura secreta dos webhooks do Mercado Pago
 }

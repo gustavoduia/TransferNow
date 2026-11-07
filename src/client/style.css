@@ -641,3 +641,344 @@ body.is-dragging .drop-veil {
     transition-duration: 1ms !important;
   }
 }
+
+/* ───────────── conta e planos ───────────── */
+
+.topbar {
+  position: fixed;
+  top: max(20px, env(safe-area-inset-top));
+  right: 24px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.chip--account {
+  padding: 9px 16px;
+  font-size: var(--t-base);
+}
+
+.link-btn--cloud {
+  margin-top: 4px;
+}
+
+.led--amber {
+  background: #ffb020;
+  box-shadow:
+    0 0 6px #ffb020,
+    0 0 14px rgba(255, 176, 32, 0.6);
+}
+
+.switch--small {
+  min-height: 42px;
+  padding: 0 16px 0 12px;
+  font-size: var(--t-sm);
+}
+
+.switch:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.switch-row--start {
+  justify-content: flex-start;
+}
+
+.sheet {
+  width: min(460px, calc(100% - 32px));
+  max-height: calc(100dvh - 32px);
+  overflow: auto;
+  padding: 26px 26px 22px;
+  border: 1px solid #2c3046;
+  border-radius: 10px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.04), transparent 120px),
+    var(--panel);
+  color: var(--chrome);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6);
+}
+.sheet[open] {
+  animation: panel-in 320ms var(--ease-out);
+}
+.sheet::backdrop {
+  background: rgba(4, 6, 20, 0.72);
+  backdrop-filter: blur(3px);
+}
+.sheet--wide {
+  width: min(980px, calc(100% - 32px));
+}
+.sheet h2 {
+  margin: 0 0 8px;
+  font: italic 800 var(--t-xl) / 1.1 var(--logo);
+  color: #e8edf4;
+}
+.sheet__lead {
+  margin: 0 0 18px;
+  max-width: 62ch;
+  color: #aab2c3;
+}
+.sheet__fine {
+  margin: 12px 0 0;
+  font-size: var(--t-sm);
+  color: var(--chrome-dim);
+}
+.sheet__close {
+  position: absolute;
+  top: 14px;
+  right: 16px;
+  margin: 0;
+}
+.sheet {
+  position: fixed;
+}
+
+.plans {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+.plan {
+  display: grid;
+  grid-template-rows: auto auto 1fr auto;
+  gap: 10px;
+  padding: 18px 16px;
+  border: 1px solid #2c3046;
+  border-radius: 8px;
+  background: rgba(7, 6, 11, 0.45);
+}
+.plan h3 {
+  margin: 0;
+  font: italic 800 var(--t-md) var(--logo);
+  color: #e8edf4;
+}
+.plan[data-plan="pro"] {
+  border-color: rgba(255, 106, 31, 0.6);
+  box-shadow: inset 0 0 0 1px rgba(255, 106, 31, 0.15);
+}
+.plan.is-current {
+  border-color: var(--flux);
+}
+.plan__price {
+  margin: 0;
+  font-size: var(--t-md);
+  font-weight: 600;
+  color: #ffd2b8;
+}
+.plan ul {
+  margin: 0;
+  padding: 0 0 0 18px;
+  font-size: var(--t-sm);
+  color: #aab2c3;
+  display: grid;
+  gap: 6px;
+}
+.plan__badge {
+  display: inline-block;
+  font-size: var(--t-sm);
+  color: var(--flux);
+}
+
+.login-form {
+  display: grid;
+  gap: 10px;
+}
+.login-form label {
+  font-size: var(--t-sm);
+  color: var(--chrome-dim);
+}
+.login-form input {
+  min-height: 48px;
+  padding: 0 14px;
+  border: 1px solid #3a3f55;
+  border-radius: 6px;
+  background: #07060b;
+  color: var(--chrome);
+  font: 500 var(--t-base) var(--ui);
+}
+.login-form input:focus-visible {
+  outline: 2px solid var(--flux);
+  outline-offset: 2px;
+}
+.login-form .switch {
+  justify-content: center;
+}
+.login-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 14px 0;
+  font-size: var(--t-sm);
+  color: var(--chrome-dim);
+}
+.login-divider::before,
+.login-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: #2c3046;
+}
+.switch--google {
+  width: 100%;
+  justify-content: center;
+  text-decoration: none;
+}
+.login-sent p {
+  margin: 0 0 8px;
+}
+
+.acc-plan {
+  display: grid;
+  gap: 2px;
+  margin-bottom: 18px;
+}
+.acc-plan__label,
+.usage__label {
+  font-size: var(--t-sm);
+  color: var(--chrome-dim);
+}
+.acc-plan strong {
+  font: italic 800 var(--t-lg) var(--logo);
+  color: #ffd2b8;
+}
+.usage {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 16px;
+}
+.usage__text {
+  font-size: var(--t-sm);
+  font-variant-numeric: tabular-nums;
+}
+#dlg-account .switch-row {
+  margin-top: 6px;
+}
+#acc-cancel {
+  margin-top: 14px;
+}
+
+.toast {
+  position: fixed;
+  left: 50%;
+  top: max(84px, calc(env(safe-area-inset-top) + 72px));
+  transform: translate(-50%, -12px);
+  max-width: min(520px, calc(100% - 32px));
+  padding: 12px 18px;
+  border: 1px solid #2c3046;
+  border-radius: 8px;
+  background: rgba(21, 23, 41, 0.95);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity 200ms,
+    transform 260ms var(--ease-out);
+  z-index: 10;
+}
+.toast.is-on {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+/* ───────────── modal do vídeo recompensado ───────────── */
+
+.sheet--ad {
+  text-align: center;
+}
+.sheet--ad .switch {
+  margin: 4px auto 0;
+}
+.sheet--ad .link-btn {
+  margin-top: 10px;
+}
+.ad-note {
+  min-height: 1.5em;
+  margin: 12px 0 0;
+  font-size: var(--t-sm);
+  color: #ffd2b8;
+}
+.sheet--ad[data-phase="done"] .switch {
+  visibility: hidden;
+}
+
+/* bobina de filme girando enquanto o vídeo carrega */
+.ad-reel {
+  position: relative;
+  width: 64px;
+  height: 64px;
+  margin: 0 auto 14px;
+  border-radius: 50%;
+  border: 3px solid var(--chrome-dim);
+  box-shadow:
+    0 0 0 4px rgba(91, 214, 255, 0.08),
+    0 0 18px rgba(91, 214, 255, 0.25);
+  animation: reel 1.4s linear infinite;
+}
+.ad-reel span {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--flux);
+  box-shadow: 0 0 10px var(--flux);
+  left: 22px;
+  top: 6px;
+  transform-origin: 7px 19px;
+}
+.ad-reel span:nth-child(2) {
+  transform: rotate(120deg);
+}
+.ad-reel span:nth-child(3) {
+  transform: rotate(240deg);
+}
+.sheet--ad[data-phase="ready"] .ad-reel {
+  animation-duration: 4s;
+}
+.sheet--ad[data-phase="done"] .ad-reel {
+  animation: none;
+  border-color: var(--fire);
+}
+.sheet--ad[data-phase="done"] .ad-reel span {
+  background: var(--fire);
+  box-shadow: 0 0 10px var(--fire);
+}
+@keyframes reel {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 860px) {
+  .plans {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 640px) {
+  .topbar {
+    top: max(18px, env(safe-area-inset-top));
+    right: 12px;
+    gap: 8px;
+  }
+  .chip--account {
+    padding: 7px 12px;
+    font-size: var(--t-sm);
+  }
+  .brand {
+    left: 16px;
+    text-align: left;
+  }
+  .brand .logo {
+    margin-inline: 0;
+    font-size: 1.7rem;
+  }
+  .brand .tagline {
+    display: none;
+  }
+  .plans {
+    grid-template-columns: 1fr;
+  }
+}
+
+.foot a.link-btn {
+  font-size: 0.75rem;
+}

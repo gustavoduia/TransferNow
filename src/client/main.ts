@@ -3,13 +3,18 @@ import { isValidCode, normalizeCode } from "../shared/code";
 import { prepareDownloads } from "./p2p/download";
 import type { Progress } from "./p2p/protocol";
 import type { IncomingOffer } from "./p2p/receiver";
-import { fetchConfig, ReceiverSession, SenderSession, SessionError, type PublicConfig } from "./p2p/session";
+import { ReceiverSession, SenderSession, SessionError } from "./p2p/session";
+import { api, ApiError, fetchConfig, post, type PublicConfig } from "./api";
+import { describeCloud, downloadCloud, uploadToCloud, type CloudOffer } from "./p2p/cloud";
+import { currentMe, initAccount, isPaidUser, openLogin, openPlans, refreshMe, toast } from "./ui/account";
+import { showRewarded, warmUpAds } from "./ui/ads";
 import { formatBytes, formatClock, rollCode, typewrite } from "./ui/effects";
 
 type State =
   | "idle" | "powered"
   | "send-waiting" | "send-ready" | "send-transfer" | "send-done"
-  | "recv-code" | "recv-connecting" | "recv-wait" | "recv-offer" | "recv-transfer" | "recv-done"
+  | "recv-code" | "recv-connecting" | "recv-wait" | "recv-offer" | "recv-transfer" | "recv-done" | "recv-download"
+  | "cloud-pick" | "cloud-upload" | "cloud-ready"
   | "error";
 
 /** Interface mínima da cena; um substituto vazio entra se o WebGL falhar. */
@@ -34,7 +39,9 @@ const noop: Scene = {
 
 let scene: Scene = noop;
 let state: State = "idle";
-let config: PublicConfig = { maxFileSizeMb: -1, roomTtlSeconds: 600 };
+let config: PublicConfig;
+let cloudOffer: { code: string; offer: CloudOffer } | null = null;
+let cloudAbort: AbortController | null = null;
 let sender: SenderSession | null = null;
 let receiver: ReceiverSession | null = null;
 let currentCode = "";
@@ -73,6 +80,9 @@ function fail(message: string) {
 
 function teardown() {
   window.clearInterval(countdownTimer);
+  cloudAbort?.abort();
+  cloudAbort = null;
+  cloudOffer = null;
   sender?.close();
   receiver?.close();
   sender = null;
@@ -102,6 +112,7 @@ const errorText: Record<string, string> = {
 async function startSending() {
   setState("send-waiting");
   $("#code-out").textContent = "";
+  $("#countdown-label").textContent = "expira em";
   typewrite($("#send-status"), "Abrindo o portal…");
   sender = new SenderSession({
     onCode: async (code, expiresAt) => {
@@ -141,13 +152,13 @@ function startCountdown(expiresAt: number) {
 
 async function sendBatch(files: File[]) {
   if (!sender?.ready || files.length === 0) return;
-  const limit = maxFileBytes();
-  const big = limit > 0 ? files.find((f) => f.size > limit) : undefined;
-  if (big) {
-    scene.error();
-    typewrite($("#send-status"), `“${big.name}” passa do limite de ${formatBytes(limit)} por arquivo.`);
-    return;
+  const allowed = await reserveQuota(files, $("#send-status"));
+  if (!allowed) return;
+  if (allowed.ads) {
+    const outcome = await showRewarded(config.ads.rewardedUnit, "send", openPlans);
+    if (outcome === "aborted") return;
   }
+  if (!sender?.ready) return;
 
   scene.teleport("in");
   setState("send-transfer");
@@ -183,8 +194,77 @@ async function sendBatch(files: File[]) {
   }
 }
 
-function maxFileBytes() {
-  return config.maxFileSizeMb > 0 ? config.maxFileSizeMb * 1024 * 1024 : -1;
+/** Confere e consome a cota no servidor. Devolve null (e explica) quando não pode enviar. */
+async function reserveQuota(files: File[], statusEl: HTMLElement): Promise<{ ads: boolean } | null> {
+  try {
+    const r = await post<{ ok: true; ads: boolean }>("/api/transfers/reserve", { sizes: files.map((f) => f.size) });
+    void refreshMe();
+    return r;
+  } catch (err) {
+    scene.error();
+    if (err instanceof ApiError && err.status === 403) {
+      typewrite(statusEl, `${err.message} Assine um plano para continuar.`);
+      window.setTimeout(openPlans, 900);
+    } else {
+      typewrite(statusEl, err instanceof ApiError ? err.message : "Não foi possível conferir o seu limite agora.");
+    }
+    return null;
+  }
+}
+
+// ───────────────────────────── nuvem (assinantes) ─────────────────────────────
+
+function startCloud() {
+  const me = currentMe();
+  if (!me?.user) {
+    openLogin("O modo nuvem é dos planos pagos. Entre na sua conta para assinar.");
+    return;
+  }
+  if (!isPaidUser()) {
+    openPlans();
+    return;
+  }
+  const hours = config.plans[me.plan].cloudHours;
+  scene.open();
+  setState("cloud-pick");
+  typewrite(
+    $("#cloud-status"),
+    `Jogue os arquivos no portal. Quem receber terá ${hours >= 48 ? `${hours / 24} dias` : `${hours} horas`} para baixar com o código.`,
+  );
+}
+
+async function sendToCloud(files: File[]) {
+  if (files.length === 0 || state !== "cloud-pick") return;
+  scene.teleport("in");
+  setState("cloud-upload");
+  typewrite($("#send-status"), "Guardando na nuvem…");
+  const meter = startMeter(files.length === 1 ? files[0].name : `${files.length} arquivos`);
+  cloudAbort = new AbortController();
+  try {
+    const ready = await uploadToCloud(files, (p) => meter.update(p), cloudAbort.signal);
+    meter.stop();
+    cloudAbort = null;
+    currentCode = ready.code;
+    scene.complete();
+    window.setTimeout(() => scene.signalReady(), 600);
+    setState("cloud-ready");
+    $("#code-out").textContent = "";
+    $("#countdown-label").textContent = "disponível por";
+    await rollCode($("#code-out"), ready.code);
+    typewrite($("#send-status"), "Pronto. Mande o código: o arquivo some assim que a outra pessoa baixar.", { ready: true });
+    startCountdown(ready.expiresAt);
+    void refreshMe();
+  } catch (err) {
+    meter.stop();
+    if (err instanceof DOMException && err.name === "AbortError") return;
+    if (err instanceof ApiError && err.status === 403) {
+      scene.error();
+      setState("cloud-pick");
+      typewrite($("#cloud-status"), err.message);
+      return;
+    }
+    fail(err instanceof ApiError ? err.message : "O envio para a nuvem foi interrompido. Tente de novo.");
+  }
 }
 
 // ───────────────────────────── quem recebe ─────────────────────────────
@@ -263,6 +343,19 @@ async function joinPortal(code: string) {
   scene.open();
   setState("recv-connecting");
   typewrite($("#recv-status"), "Abrindo o portal…");
+
+  let kind: "p2p" | "cloud" = "p2p";
+  try {
+    kind = (await api<{ kind: "p2p" | "cloud" }>(`/api/lookup/${code}`)).kind;
+  } catch (err) {
+    if (err instanceof ApiError && err.code === "rate_limited") {
+      scene.error();
+      setState("recv-code");
+      rejectCode(errorText.rate_limited);
+      return;
+    }
+  }
+  if (kind === "cloud") return joinCloud(code);
   void prepareDownloads();
 
   receiver = new ReceiverSession(
@@ -314,12 +407,27 @@ async function joinPortal(code: string) {
         fail(errorText[errCode] ?? message);
       },
     },
-    maxFileBytes(),
+    -1, // o limite por plano é conferido no servidor antes do envio
   );
   try {
     await receiver.join(code);
   } catch {
     fail(errorText.network);
+  }
+}
+
+async function joinCloud(code: string) {
+  try {
+    const offer = await describeCloud(code);
+    cloudOffer = { code, offer };
+    const left = offer.files.filter((f) => !f.downloaded);
+    showOffer({ files: left, totalBytes: left.reduce((s, f) => s + f.size, 0) });
+    const until = new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }).format(offer.expiresAt);
+    $("#offer-title").textContent += ` (guardado até ${until})`;
+  } catch {
+    scene.error();
+    setState("recv-code");
+    rejectCode(errorText.not_found);
   }
 }
 
@@ -345,7 +453,14 @@ function showOffer(offer: IncomingOffer) {
 
 let meter: ReturnType<typeof startMeter> | null = null;
 
-function acceptOffer() {
+async function acceptOffer() {
+  if (cloudOffer) return acceptCloud();
+  if (!pendingOffer || !receiver) return;
+  // Anúncio só quando as duas pontas são do plano gratuito.
+  if (!receiver.senderPaid && !isPaidUser()) {
+    const outcome = await showRewarded(config.ads.rewardedUnit, "receive", openPlans);
+    if (outcome === "aborted") return;
+  }
   if (!pendingOffer || !receiver) return;
   const offer = pendingOffer;
   pendingOffer = null;
@@ -355,7 +470,29 @@ function acceptOffer() {
   meter = startMeter(offer.files.length === 1 ? offer.files[0].name : `${offer.files.length} arquivos`);
 }
 
+async function acceptCloud() {
+  if (!cloudOffer) return;
+  const { code, offer } = cloudOffer;
+  scene.teleport("out");
+  setState("recv-download");
+  typewrite($("#recv-status"), "Trazendo da nuvem… acompanhe na barra de downloads do navegador.");
+  await downloadCloud(code, offer, (done, total) => {
+    scene.setProgress(done / total);
+    if (done < total) typewrite($("#recv-status"), `Recebidos ${done} de ${total}. Continue com a página aberta.`);
+  });
+  scene.setProgress(0);
+  scene.complete();
+  setState("recv-done");
+  cloudOffer = null;
+  typewrite($("#recv-status"), "Tudo recebido. Os arquivos já foram apagados da nuvem.", { ready: true });
+}
+
 function declineOffer() {
+  if (cloudOffer) {
+    cloudOffer = null;
+    resetToIdle();
+    return;
+  }
   receiver?.decline();
   pendingOffer = null;
   setState("recv-wait");
@@ -417,7 +554,7 @@ function startMeter(label: string) {
 
 function setupDrop() {
   let depth = 0;
-  const canDrop = () => state === "send-ready" || state === "send-done";
+  const canDrop = () => state === "send-ready" || state === "send-done" || state === "cloud-pick";
   addEventListener("dragenter", (e) => {
     if (!e.dataTransfer?.types.includes("Files")) return;
     e.preventDefault();
@@ -445,13 +582,20 @@ function setupDrop() {
     scene.setHover(false);
     if (!canDrop()) return;
     const files = [...(e.dataTransfer?.files ?? [])].filter((f) => f.size > 0 || f.type);
-    void sendBatch(files);
+    if (state === "cloud-pick") void sendToCloud(files);
+    else void sendBatch(files);
   });
   $<HTMLInputElement>("#file-input").addEventListener("change", (e) => {
     const input = e.target as HTMLInputElement;
     const files = [...(input.files ?? [])];
     input.value = "";
     void sendBatch(files);
+  });
+  $<HTMLInputElement>("#cloud-input").addEventListener("change", (e) => {
+    const input = e.target as HTMLInputElement;
+    const files = [...(input.files ?? [])];
+    input.value = "";
+    void sendToCloud(files);
   });
 }
 
@@ -477,7 +621,11 @@ function bind() {
     scene.powerOn();
     setState("powered");
   });
-  $("#btn-send").addEventListener("click", () => void startSending());
+  $("#btn-send").addEventListener("click", () => {
+    if (!isPaidUser()) warmUpAds(config.ads.rewardedUnit);
+    void startSending();
+  });
+  $("#btn-cloud").addEventListener("click", startCloud);
   $("#btn-receive").addEventListener("click", () => {
     fillCode("");
     $("#code-error").textContent = "";
@@ -488,7 +636,7 @@ function bind() {
     "click",
     (e) => void copy(`${location.origin}/#${currentCode}`, e.currentTarget as HTMLElement, "Link copiado"),
   );
-  $("#btn-accept").addEventListener("click", acceptOffer);
+  $("#btn-accept").addEventListener("click", () => void acceptOffer());
   $("#btn-decline").addEventListener("click", declineOffer);
   $("#btn-restart").addEventListener("click", () => {
     resetToIdle();
@@ -496,9 +644,8 @@ function bind() {
     setState("powered");
   });
   $("#btn-close").addEventListener("click", resetToIdle);
-  $("#btn-privacy").addEventListener("click", () => $<HTMLDialogElement>("#privacy").showModal());
   addEventListener("beforeunload", (e) => {
-    if (state === "send-transfer" || state === "recv-transfer") e.preventDefault();
+    if (["send-transfer", "recv-transfer", "cloud-upload", "recv-download"].includes(state)) e.preventDefault();
   });
   setupCodeInput();
   setupDrop();
@@ -517,10 +664,10 @@ async function loadScene() {
 }
 
 async function main() {
+  config = await fetchConfig();
   bind();
   setState("idle");
-  const [cfg] = await Promise.all([fetchConfig(), loadScene()]);
-  config = cfg;
+  await Promise.all([initAccount(config), loadScene()]);
 
   // Link compartilhado (https://…/#CODIGO): já abre o portal no modo de receber.
   const fromHash = normalizeCode(location.hash.slice(1));

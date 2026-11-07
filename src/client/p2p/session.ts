@@ -5,20 +5,6 @@ import { Receiver, type IncomingOffer } from "./receiver";
 import { sendFiles, TransferRejected } from "./sender";
 import { Signaling } from "./signaling";
 
-export interface PublicConfig {
-  maxFileSizeMb: number;
-  roomTtlSeconds: number;
-}
-
-export async function fetchConfig(): Promise<PublicConfig> {
-  try {
-    const r = await fetch("/api/config");
-    return (await r.json()) as PublicConfig;
-  } catch {
-    return { maxFileSizeMb: -1, roomTtlSeconds: 600 };
-  }
-}
-
 export interface SessionEvents {
   onPeerReady(): void;
   onPeerLeft(): void;
@@ -115,6 +101,8 @@ export interface ReceiverSessionEvents extends SessionEvents {
 
 export class ReceiverSession extends BaseSession {
   private receiver: Receiver | null = null;
+  /** O servidor informa se quem abriu o portal é assinante (assinante não gera anúncio para quem recebe). */
+  senderPaid = false;
 
   constructor(
     private events: ReceiverSessionEvents,
@@ -144,6 +132,7 @@ export class ReceiverSession extends BaseSession {
     });
 
     this.signaling = new Signaling(code, "receiver", {
+      onHello: (_expiresAt, senderPaid) => (this.senderPaid = !!senderPaid),
       onSignal: (data) => void this.peer?.handleSignal(data),
       onPeerLeft: () => !this.closed && this.events.onPeerLeft(),
       onError: (c, m) => this.events.onError(c, m),
