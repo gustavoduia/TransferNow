@@ -51,6 +51,8 @@
   "vars": {
     "ROOM_TTL_SECONDS": "600",
     "EMAIL_FROM": "transfernow@duia.com.br",
+    // ID de editor do AdSense (público: aparece no próprio ads.txt)
+    "ADSENSE_PUB_ID": "pub-3750299340839736",
     // Acesso total ao painel /admin (outros admins podem ser promovidos pelo próprio painel)
     "ADMIN_EMAILS": "gustavogdv@gmail.com,gustavoduia@icloud.com"
   }
